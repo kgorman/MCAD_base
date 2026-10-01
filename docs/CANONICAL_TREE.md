@@ -1,139 +1,173 @@
-# Canonical shop tree
+# MCAD_base store layout
 
-One root on the NAS that receives everything: the nightly mirror of the
-Fusion cloud, immutable release packages, the NC share the machines mount,
-and the shared libraries. Schema version 1.
+One root on the NAS, shaped like the Fusion cloud: hub, project, folder,
+then one folder per design. Everything about a design lands in that
+design's folder. Schema version 2.
 
-Companion to `PROJECT_LAYOUT.md`, which describes a single part's working
-folder. This file describes the shop-wide root that release packages land
-in.
+The project, and inside it the design, is the container. State lives inside
+the container: work in progress, released revisions, and build records are
+subfolders of the design, not separate trees.
 
 ## Rules
 
-1. **Part number is the key, not project or customer.** Projects change
-   names; part numbers don't. Customer and project live in the manifest.
-2. **Three kinds of area, three kinds of writer.**
-   - `mirror/` is written only by the sync tool. Mutable, overwritten nightly.
+1. **The tree follows Fusion.** Hub, project, and folder names are the
+   cloud's names. A design is found on disk where it is found in Fusion.
+2. **One folder per design.** The folder is the configuration item. Nothing
+   about a design lives outside its folder.
+3. **Identity is the Fusion item id, not the path.** It is recorded in
+   `design.json`. A rename or move in the cloud moves the folder; the id
+   does not change. A part number is a field in `design.json`, added when
+   one exists.
+4. **Three reserved names, three writers.**
+   - `wip/` is written only by the sync tool. Mutable, overwritten whenever
+     the cloud changes.
    - `released/` is written only by the release tool. Append-only; a
      revision folder is never modified after its `SHA256SUMS` is written.
-   - `nc/` and `print/` are derived from `released/` by the release tool.
-     Machines and farm software read them. Humans don't edit them.
-3. **A revision folder is immutable.** New revision, new folder. Obsolete
+   - `builds/` holds records of what actually ran. Append-only.
+
+   Anything else in the design folder is yours: photos, loose STLs, notes.
+5. **Sync never touches what it does not own.** Inside a design folder it
+   writes `wip/`, `design.json`, `history.jsonl`, and the
+   `DELETED_IN_CLOUD` marker. Nothing else, ever.
+6. **A revision folder is immutable.** New revision, new folder. Obsolete
    revisions stay; they get an `OBSOLETE` marker file, not a delete.
-4. **`CURRENT` is a file, not a symlink.** SMB clients and CNC controls
+7. **Nothing is deleted because the cloud deleted it.** The folder stays
+   and gets a `DELETED_IN_CLOUD` marker.
+8. **`CURRENT` is a file, not a symlink.** SMB clients and CNC controls
    don't follow symlinks reliably. `CURRENT` contains one line: the
    current revision string.
-5. **Names are safe everywhere.** Lowercase ASCII, digits, `-` and `_`,
-   no spaces. Total path length under 200 characters so Windows clients
-   and CNC controls with 8.3 or 32-character limits don't choke.
-   Machine-facing NC file names follow the control's own limits.
-6. **Every derived file states its parameters in its path.** G-code and
-   NC programs are only valid for one machine, material, and profile.
-7. **Every folder that matters has a `manifest.json`.** Machine-readable
-   lineage: which Fusion version id, which mesh, which profile, which tool.
-8. **Integrity is explicit.** `SHA256SUMS` in every release revision folder,
-   generated last, verified by the nightly job.
+9. **Safe names inside `released/`.** Lowercase ASCII, digits, `-`, `_`,
+   `.`, no spaces, total path under 200 characters. Names above the
+   revision folder come from Fusion and are not policed.
+10. **Every derived file states its parameters in its path.** G-code and
+    NC programs are only valid for one machine, material, and profile.
+11. **Integrity is explicit.** `SHA256SUMS` in every revision folder,
+    generated last.
+12. **Machines do not browse this tree.** When a machine needs files, the
+    release tool copies them into a flat `_outbox/<machine>/`. The outbox
+    is a view; the revision folder is the home.
 
 ## Tree
 
 ```
-<root>/                                     <- a share or folder on the NAS; back this whole thing up off-site
+<root>/                                     <- a folder on the NAS; back this whole thing up off-site
   .mcad-tree.json                           <- schema version marker, written by mcad_tree.py init
-  README.md                                 <- points here
-  SCHEMA.md                                 <- this document, versioned
-  logs/
-    fusion-sync.log
-    release.log
-    verify.log                              <- nightly SHA256SUMS check
+  README.md
+  SCHEMA.md                                 <- this document
+  .fusion-sync/                             <- sync tool state: manifest.json, logs
 
-  mirror/                                   <- NIGHTLY, MUTABLE. Written by fusion_sync only.
-    <hub>/
-      <project>/
-        <folder>/.../<design>.f3d            <- native archive, latest cloud version
-                     <design>.step
-    .fusion-sync/
-      manifest.json                         <- cloud version id behind each file
-      _versions/...                         <- prior copies when a design changed
+  <hub>/                                    <- as named in Fusion
+    <project>/                              <- Fusion project, e.g. Bike/
+      <folder>/...                          <- Fusion folders, as-is
+        <design>/                           <- ONE FOLDER PER FUSION DESIGN, e.g. Headset Spacers/
+          design.json                       <- identity: Fusion item id, part number, description
+          history.jsonl                     <- ledger: synced, moved, released, built
+          DELETED_IN_CLOUD                  <- marker, only if the design is gone from the cloud
 
-  released/                                 <- IMMUTABLE. Written by the release tool only.
-    <part-number>/                          e.g. bm-0042/
-      CURRENT                               <- text file: "rev-b"
-      rev-a/
-        manifest.json                       <- part, rev, fusion version id, who, when, why
-        CHANGELOG.md                        <- what changed from the prior rev
-        SHA256SUMS                          <- written last; folder frozen after this
-        cad/
-          bm-0042.f3d
-          bm-0042.step
-        drawings/
-          bm-0042_rev-a.pdf
-          bm-0042_rev-a.dxf
-        mesh/
-          bm-0042_rev-a.3mf                 <- generic 3MF, slicer-neutral
-          bm-0042_rev-a.stl
-        build/                              <- additive, per process/machine/profile
-          fdm/bambu-p1s/petg_0.4_0.20mm/
-            profile.json
-            bm-0042_rev-a.3mf               <- project 3MF with gcode inside
-            bm-0042_rev-a.gcode
-            slice_info.xml
-          mjf/hp-5200/pa12_default/
-            bm-0042_rev-a.3mf
-            build-notes.md
-        cam/                                <- subtractive, per machine
-          haas-vf2/
-            o0042_op10_rev-a.nc
-            o0042_op20_rev-a.nc
-            setup-sheet_op10.pdf
-            tools.json
-        docs/
-          orientation.md                    <- build orientation, supports, post-processing
-          test-report.pdf
-          inspection_first-article.pdf
-          material-spec.pdf
-      rev-b/
-        ...
-        OBSOLETE                            <- marker only, never deleted (absent while current)
+          wip/                              <- WORK IN PROGRESS. Sync tool only. Overwritten.
+            <design>.f3d                    <- native archive, latest cloud version
+            <design>.step
+            _versions/                      <- prior copies when the cloud version changed
+              <design>.v13.f3d
 
-  nc/                                       <- WHAT THE MACHINES MOUNT. Copies from released/, never edited.
-    haas-vf2/
-      bm-0042/
-        o0042_op10_rev-a.nc
-        o0042_op20_rev-a.nc
-      _CHANGELOG.txt                        <- appended by the release tool
-    mazak-qtn/
-      ...
-    _prove-out/                             <- unreleased programs; separate so nobody runs them by mistake
-      haas-vf2/...
+          released/                         <- RECORDS. Release tool only. Frozen.
+            CURRENT                         <- text file: "rev-b"
+            rev-a/
+              manifest.json                 <- part, rev, fusion version id, who, when, why
+              CHANGELOG.md                  <- what changed from the prior rev
+              SHA256SUMS                    <- written last; folder frozen after this
+              OBSOLETE                      <- marker, only once superseded
+              cad/
+                bm-0042.f3d
+                bm-0042.step
+              drawings/
+                bm-0042_rev-a.pdf
+              mesh/
+                bm-0042_rev-a.3mf           <- generic 3MF, slicer-neutral
+                bm-0042_rev-a.stl
+              build/                        <- additive, per process/machine/profile
+                fdm/bambu-p1s/petg_0.4_0.20mm/
+                  profile.json
+                  bm-0042_rev-a.3mf         <- project 3MF with gcode inside
+                  bm-0042_rev-a.gcode
+              cam/                          <- subtractive, per machine
+                haas-vf2/
+                  o0042_op10_rev-a.nc
+                  setup-sheet_op10.pdf
+              docs/
+                orientation.md              <- build orientation, supports, post-processing
+                inspection_first-article.pdf
+            rev-b/
+              ...
 
-  print/                                    <- WHAT THE FARM SOFTWARE READS
-    queue/                                  <- release tool drops sliced files here; farm consumes
-    builds/                                 <- one folder per build actually run
-      2026/2026-09-27_p1s-01_b0173/
-        bm-0042_rev-a.gcode                 <- exact file that ran
-        build.json                          <- printer, material lot, operator, result, photos
-    archive/                                <- old builds, retained per policy
+          builds/                           <- WHAT ACTUALLY RAN. Append-only.
+            2026-09-27_p1s-01_b0173/
+              bm-0042_rev-a.gcode           <- exact file that ran
+              build.json                    <- printer, material lot, operator, result
 
-  library/                                  <- SHARED ASSETS. Mirror of the hub's Assets plus shop extras.
-    posts/                                  <- post processors, same files as hub Assets/CAMPosts
-    tools/                                  <- tool libraries
-    machines/                               <- machine definitions
-    print-profiles/
-      bambu-p1s/petg_0.4_0.20mm.json
-    templates/
-    standards/
-      naming.md
-      release-procedure.md                  <- the two-page ISO procedure
-      retention.md
+          (anything else)                   <- yours: photos, loose STLs, notes
+
+  _index/
+    parts.csv                               <- generated by mcad_tree.py index: part number -> folder
+  _outbox/                                  <- only if a machine needs it; created by add-machine
+    haas-vf2/                               <- flat, safe names; copies from released/, never edited
 ```
+
+Uploaded files that are not Fusion designs (a vendor PDF, an imported STL)
+are items in the cloud too, and get the same treatment: a folder named for
+the file, with the file in `wip/`.
+
+A Fusion project normally has a single root folder. It is flattened away so
+the disk path reads `<hub>/<project>/<design>/`, the same as the Fusion data
+panel. A project with several root folders keeps their names.
+
+## design.json
+
+Written by the sync tool. It owns the keys shown here and preserves any
+others, so `part_number`, `description`, and fields of your own survive
+every sync.
+
+```json
+{
+  "schema": 2,
+  "fusion_item_id": "urn:adsk.wipprod:dm.lineage:...",
+  "name": "Headset Spacers",
+  "kind": "design",
+  "hub": "Kevin's Hub",
+  "project": "Bike",
+  "part_number": null,
+  "description": null,
+  "wip": {
+    "version_id": "urn:adsk.wipprod:fs.file:vf....?version=14",
+    "version_number": 14,
+    "last_modified": "2026-09-30T21:14:03Z",
+    "synced_at": "2026-10-01T02:00:11-0500",
+    "files": ["Headset Spacers.f3d", "Headset Spacers.step"]
+  }
+}
+```
+
+## history.jsonl
+
+One JSON object per line, appended, never rewritten. The design's status
+record: what happened to it and when.
+
+```
+{"at": "2026-09-27T02:00:09-0500", "event": "synced", "version_number": 13, "files": ["Headset Spacers.f3d"]}
+{"at": "2026-10-01T02:00:11-0500", "event": "synced", "version_number": 14, "files": ["Headset Spacers.f3d"]}
+{"at": "2026-10-02T02:00:07-0500", "event": "moved", "from": "Hub/Bike/Spacers", "to": "Hub/Bike/Headset Spacers"}
+```
+
+Events written today: `synced`, `moved`, `deleted_in_cloud`,
+`restored_in_cloud`. The release tool will add `released` and `obsoleted`.
 
 ## manifest.json for a release revision
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "part_number": "bm-0042",
-  "description": "Bracket, motor mount",
+  "description": "Spacer, headset, 10 mm",
   "revision": "rev-a",
   "status": "released",
   "released_at": "2026-09-27T05:20:00-05:00",
@@ -141,16 +175,16 @@ in.
   "reason": "Initial release after first-article inspection 2026-09-25",
   "source": {
     "hub": "Kevin's Hub",
-    "project": "Shop Projects",
+    "project": "Bike",
     "fusion_item_id": "urn:adsk.wipprod:dm.lineage:...",
     "fusion_version_id": "urn:adsk.wipprod:fs.file:vf....?version=14",
     "fusion_version_name": "REL A"
   },
   "process": {
-    "primary": "mjf",
-    "material": "PA12",
+    "primary": "fdm",
+    "material": "PETG",
     "orientation": "docs/orientation.md",
-    "post_processing": ["bead blast", "black dye"]
+    "post_processing": []
   },
   "files": {
     "cad/bm-0042.f3d":            { "tool": "fusion-cloud-export", "format": "f3d" },
@@ -175,33 +209,39 @@ in.
 
 | Area | Writer | Mutability | Reader |
 |---|---|---|---|
-| `mirror/` | fusion_sync, nightly | overwritten | humans (browse), disaster recovery |
-| `released/<pn>/<rev>/` | release tool, on release | frozen after SHA256SUMS | everyone, auditors |
-| `released/<pn>/CURRENT` | release tool | replaced on each release | release tool, scripts |
-| `nc/<machine>/` | release tool copies from released | replace on release | CNC controls via SMB |
-| `nc/_prove-out/` | CAM programmer | free | CNC controls, clearly separated |
-| `print/queue/` | release tool or engineer | consumed by farm | farm software |
-| `print/builds/` | farm software or operator | append-only | QC, traceability |
-| `library/` | admin | controlled | Fusion seats, release tool |
+| `<design>/wip/` | fusion_sync | overwritten | humans (browse), disaster recovery, release tool |
+| `<design>/design.json` | fusion_sync (its keys); people (the rest) | updated | every tool |
+| `<design>/history.jsonl` | fusion_sync, release tool | append-only | auditors |
+| `<design>/released/<rev>/` | release tool | frozen after SHA256SUMS | everyone, auditors |
+| `<design>/released/CURRENT` | release tool | replaced on each release | release tool, scripts |
+| `<design>/builds/` | farm software or operator | append-only | QC, traceability |
+| `<design>/` anything else | people | free | people |
+| `_index/` | mcad_tree index | regenerated | people, scripts |
+| `_outbox/<machine>/` | release tool copies from released | replaced on release | machines via SMB |
 
-## NAS permissions that enforce it
+## Protection
 
-- `mirror/`: write for the sync service account only.
-- `released/`: write for the release service account only; everyone else
-  read. Revision folders additionally set read-only after `SHA256SUMS`.
-- `nc/`: write for the release account; machines and operators read.
-  `_prove-out/` writable by programmers.
-- `print/builds/`: append for the farm account and operators.
-- Snapshots on the NAS (ZFS, btrfs, or the vendor's) daily, off-site copy
-  weekly. The tree is designed so a snapshot is a coherent point in time.
+- Revision folders are set read-only after `SHA256SUMS` is written.
+- Snapshots on the NAS daily, off-site copy weekly. A snapshot of the root
+  is a coherent point in time for every design.
+- With more than one person writing: a sync account and a release account,
+  and NAS permissions that match the table above.
 
 ## Mapping to the standards
 
-- ISO 9001 7.5.3 preservation: `mirror/` plus NAS snapshots plus off-site.
-- ISO 9001 8.3 design outputs and 8.5.2 traceability: `released/` with
-  manifest and SHA256SUMS; `print/builds/` and NC header blocks link
-  shipped parts to a revision.
-- AS9100 8.1.2 configuration: `manifest.json` `supersedes` chain plus
-  `OBSOLETE` markers; nothing deleted.
-- Retention: `manifest.retention` per revision; `verify.log` proves the
-  archive is still intact.
+- ISO 9001 7.5.2 identification: `design.json` and each revision's
+  `manifest.json`.
+- ISO 9001 7.5.3 control and preservation: `wip/` plus NAS snapshots plus
+  off-site for preservation; frozen revision folders and `SHA256SUMS` for
+  protection from unintended change; `OBSOLETE` markers for control of
+  superseded records.
+- ISO 9001 8.3.5 design outputs and 8.5.2 traceability: `released/<rev>/`
+  holds the outputs; `builds/` ties a physical part to the revision and
+  the exact file that made it. One folder holds the whole chain.
+- ISO 10007 configuration management: the design folder is the
+  configuration item, `released/<rev>/` are its baselines, and
+  `history.jsonl` is its status accounting.
+- ISO 19650 container states, borrowed from construction: `wip/` is work
+  in progress, `released/` with `CURRENT` is published, revisions marked
+  `OBSOLETE` are the archive.
+- Retention: `manifest.retention` per revision.

@@ -1,120 +1,96 @@
 #!/usr/bin/env python3
 """
-mcad_tree.py - scaffold and check the canonical shop tree on a NAS share.
+mcad_tree.py - set up and check an MCAD_base file store.
 
-The tree is defined once, as data, in this file (DIRS and AREA_NOTES) and
-described for humans in docs/CANONICAL_TREE.md, which is copied onto the share as
-SCHEMA.md. `init` applies the definition to a root folder; `check` compares a
-root against it. Both are safe to re-run for the life of the share: init only
-adds what is missing and never overwrites or deletes anything it finds.
+The store is rooted on the Fusion cloud's own structure: hub, project, folder,
+then one folder per design. Everything about a design lands in its folder:
+the latest cloud export in wip/, frozen revisions in released/, records of
+what actually ran in builds/, and any loose material beside them. The layout
+and its rules are in docs/CANONICAL_TREE.md, which is copied into the store as
+SCHEMA.md.
+
+`init` marks a folder as a store. fusion_sync.py creates the hubs, projects,
+and design folders. `check` validates what is there, and `index` writes a
+part-number lookup. All are safe to re-run; none overwrite or delete what
+they did not write.
 
 Standard library only. Python 3.9+.
 
 Quick start:
     ./mcad_tree.py init /Volumes/MCAD/MCAD_base --dry-run   # show what would be created
     ./mcad_tree.py init /Volumes/MCAD/MCAD_base             # create it
-    ./mcad_tree.py check /Volumes/MCAD/MCAD_base            # does the share still match?
+    ./mcad_tree.py check /Volumes/MCAD/MCAD_base            # does the store follow the schema?
+    ./mcad_tree.py index /Volumes/MCAD/MCAD_base            # write _index/parts.csv
     ./mcad_tree.py add-machine /Volumes/MCAD/MCAD_base haas-vf2
-    ./mcad_tree.py add-printer /Volumes/MCAD/MCAD_base bambu-p1s
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime
+import io
 import json
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MARKER = ".mcad-tree.json"
 SCHEMA_DOC = "SCHEMA.md"
 SCHEMA_SOURCE = Path(__file__).resolve().parent / "docs" / "CANONICAL_TREE.md"
 
-# Every directory the scaffold owns, relative to the root.
-DIRS = [
-    "logs",
-    "mirror",
-    "released",
-    "nc",
-    "nc/_prove-out",
-    "print",
-    "print/queue",
-    "print/builds",
-    "print/archive",
-    "library",
-    "library/posts",
-    "library/tools",
-    "library/machines",
-    "library/print-profiles",
-    "library/templates",
-    "library/standards",
-]
+# Inside a design folder.
+DESIGN_FILE = "design.json"
+HISTORY_FILE = "history.jsonl"
+WIP_DIRNAME = "wip"
+RELEASED_DIRNAME = "released"
+BUILDS_DIRNAME = "builds"
+CURRENT_FILE = "CURRENT"
+DELETED_MARKER = "DELETED_IN_CLOUD"
 
-# One README per area so the writer rule is visible to anyone browsing the share.
-AREA_NOTES = {
-    "mirror": (
-        "Nightly mirror of the Fusion cloud. Written by fusion_sync only.\n"
-        "Mutable: files here are overwritten when the cloud changes. Do not edit\n"
-        "or save work here. This answers \"could we lose it\", not \"what did we ship\".\n"
-    ),
-    "released": (
-        "Release records, one folder per part number, one subfolder per revision.\n"
-        "Written by the release tool only. A revision folder is frozen once its\n"
-        "SHA256SUMS exists: new revision, new folder. Obsolete revisions get an\n"
-        "OBSOLETE marker and are never deleted. CURRENT is a one-line text file\n"
-        "naming the current revision.\n"
-    ),
-    "nc": (
-        "What the machines mount. Programs here are copies from released/ and are\n"
-        "never edited in place. Unreleased programs go in _prove-out/ so nobody\n"
-        "runs them by mistake.\n"
-    ),
-    "print": (
-        "What the print farm reads. queue/ receives sliced files from a release;\n"
-        "builds/ gets one folder per build actually run, with the exact file that\n"
-        "ran and a build.json; archive/ holds old builds kept per retention policy.\n"
-    ),
-    "library": (
-        "Shared assets: post processors, tool libraries, machine definitions,\n"
-        "print profiles, templates, and the written standards. Changes here are\n"
-        "controlled; treat it like released/, not like a scratch folder.\n"
-    ),
-    "logs": "Logs from the sync, release, and nightly verify jobs.\n",
-}
+# At the store root, beside the hubs.
+INDEX_DIRNAME = "_index"
+OUTBOX_DIRNAME = "_outbox"
+PARTS_INDEX = "parts.csv"
+INDEX_COLUMNS = ["part_number", "name", "kind", "hub", "project", "path",
+                 "current_revision", "wip_version", "deleted_in_cloud"]
 
 ROOT_README = """\
 # MCAD_base
 
-Shop CAD archive, laid out per SCHEMA.md (schema version {schema}).
+Shop CAD file store, laid out per SCHEMA.md (schema version {schema}).
 
-| Folder | What it is | Who writes |
+The tree follows Fusion: hub, project, folder, then one folder per design.
+Inside a design folder:
+
+| Name | What it is | Who writes |
 |---|---|---|
-| `mirror/` | nightly backup of the Fusion cloud | sync tool only |
-| `released/` | immutable release records, by part number and revision | release tool only |
-| `nc/` | programs the machines run, copied from `released/` | release tool only |
-| `print/` | print queue and build records | release tool, farm, operators |
-| `library/` | posts, tools, machines, print profiles, standards | admin |
-| `logs/` | sync, release, and verify logs | tools |
+| `design.json` | identity: Fusion item id, part number, description | sync tool; you may add fields |
+| `history.jsonl` | ledger: synced, released, built | tools, append-only |
+| `wip/` | latest export from the Fusion cloud, overwritten when the cloud changes | sync tool only |
+| `released/` | frozen revisions, one folder per revision | release tool only |
+| `builds/` | records of what actually ran | operators, farm software |
+| anything else | photos, loose STLs, notes | you |
 
-Backup and release are different things. `mirror/` changes every night.
-`released/` never changes after a revision is signed off.
+Backup and release are different things. `wip/` changes whenever the design
+does. A revision under `released/` never changes after it is signed off.
+
+Do not save work into `wip/`. Do not edit anything under `released/`.
 
 This layout is maintained by `mcad_tree.py`. Run `mcad_tree.py check <this folder>`
-to see whether it still matches the schema.
+to see whether the store still follows the schema.
 """
 
 # Things the NAS or a client OS drops on a share; never ours, never reported.
 IGNORED = {"#recycle", "@eaDir", "#snapshot", "desktop.ini", "Thumbs.db"}
 # Names the schema itself spells in capitals.
-WELL_KNOWN = {"README.md", "SCHEMA.md", "CURRENT", "OBSOLETE", "SHA256SUMS", "CHANGELOG.md", "_CHANGELOG.txt"}
-NAME_RE = re.compile(r"^_?[a-z0-9][a-z0-9._-]*$")
+WELL_KNOWN = {"README.md", "SCHEMA.md", "CURRENT", "OBSOLETE", "SHA256SUMS", "CHANGELOG.md"}
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+REV_RE = re.compile(r"^rev-[a-z0-9]+$")
 MAX_PATH = 200
-# mirror/ carries the cloud's own names, so the naming rule is not applied there.
-NAMED_AREAS = ["released", "nc", "print", "library", "logs"]
 
 
 class TreeError(Exception):
@@ -124,8 +100,6 @@ class TreeError(Exception):
 def tool_docs() -> dict:
     """rel path -> text for every file the scaffold owns."""
     docs = {"README.md": ROOT_README.format(schema=SCHEMA_VERSION)}
-    for area, note in AREA_NOTES.items():
-        docs[f"{area}/README.md"] = f"# {area}/\n\n{note}\nSee ../SCHEMA.md for the full layout and rules.\n"
     if SCHEMA_SOURCE.exists():
         docs[SCHEMA_DOC] = SCHEMA_SOURCE.read_text(encoding="utf-8")
     return docs
@@ -139,21 +113,33 @@ def valid_name(name: str) -> bool:
     return name in WELL_KNOWN or bool(NAME_RE.match(name))
 
 
-def read_marker(root: Path) -> Optional[dict]:
-    path = root / MARKER
+def read_json(path: Path) -> Optional[dict]:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise TreeError(f"{path} is unreadable: {exc}")
+    if not isinstance(data, dict):
+        raise TreeError(f"{path} is not a JSON object")
+    return data
 
 
 def require_root(root: Path) -> None:
     # Never create the root itself: if the share is not mounted, a mkdir here
-    # would quietly build the tree on the local disk instead.
+    # would quietly build the store on the local disk instead.
     if not root.is_dir():
         raise TreeError(f"{root} does not exist or is not a folder. Is the share mounted?")
+
+
+def require_store(root: Path) -> dict:
+    require_root(root)
+    marker = read_json(root / MARKER)
+    if marker is None:
+        raise TreeError(f"{root} has not been initialized. Run init first.")
+    if marker.get("schema") != SCHEMA_VERSION:
+        raise TreeError(f"{root} is at schema {marker.get('schema')}; this tool works on schema {SCHEMA_VERSION}.")
+    return marker
 
 
 class Scaffold:
@@ -184,21 +170,21 @@ class Scaffold:
             self.out(f"  write   {rel}")
         self.changed += 1
         if not self.dry_run:
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
 
 
 def init_tree(root: Path, dry_run: bool = False, update_docs: bool = False,
               out: Callable[[str], None] = print) -> int:
-    """Create whatever is missing under root. Returns the number of changes."""
+    """Mark root as a store and write its docs. Returns the number of changes."""
     require_root(root)
-    marker = read_marker(root)
-    if marker and marker.get("schema", 0) > SCHEMA_VERSION:
+    marker = read_json(root / MARKER)
+    if marker and marker.get("schema") != SCHEMA_VERSION:
         raise TreeError(
-            f"{root} is at schema {marker['schema']}, newer than this tool ({SCHEMA_VERSION}). Update the tool."
+            f"{root} was built at schema {marker.get('schema')}; this tool builds schema {SCHEMA_VERSION}. "
+            "There is no automatic migration."
         )
     sc = Scaffold(root, dry_run, out)
-    for rel in DIRS:
-        sc.mkdir(rel)
     for rel, text in tool_docs().items():
         sc.write(rel, text, update=update_docs)
     if marker is None:
@@ -210,21 +196,68 @@ def init_tree(root: Path, dry_run: bool = False, update_docs: bool = False,
     return sc.changed
 
 
-def check_tree(root: Path) -> tuple:
+def find_designs(root: Path) -> Iterator[Path]:
+    """Every folder holding a design.json. Design folders do not nest, so the walk stops there."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        if DESIGN_FILE in filenames:
+            dirnames[:] = []
+            yield Path(dirpath)
+            continue
+        at_root = Path(dirpath) == root
+        dirnames[:] = sorted(d for d in dirnames if not ignored(d) and not (at_root and d.startswith("_")))
+
+
+def current_revision(design: Path) -> Optional[str]:
+    path = design / RELEASED_DIRNAME / CURRENT_FILE
+    return path.read_text(encoding="utf-8").strip() if path.exists() else None
+
+
+def check_released(root: Path, design: Path, problems: List[str]) -> None:
+    released = design / RELEASED_DIRNAME
+    if not released.is_dir():
+        return
+
+    def rel(path) -> str:
+        return os.path.relpath(path, root)
+
+    revisions = []
+    for entry in sorted(os.listdir(released)):
+        path = released / entry
+        if ignored(entry) or entry == CURRENT_FILE:
+            continue
+        if not path.is_dir() or not REV_RE.match(entry):
+            problems.append(f"not a revision folder (expected rev-<x>): {rel(path)}")
+            continue
+        revisions.append(entry)
+        for required in ("manifest.json", "SHA256SUMS"):
+            if not (path / required).exists():
+                problems.append(f"revision is missing {required}: {rel(path)}")
+        for dirpath, dirnames, filenames in os.walk(path):
+            dirnames[:] = [d for d in dirnames if not ignored(d)]
+            for name in dirnames + [f for f in filenames if not ignored(f)]:
+                full = rel(os.path.join(dirpath, name))
+                if not valid_name(name):
+                    problems.append(f"name breaks the naming rule: {full}")
+                if len(full) >= MAX_PATH:
+                    problems.append(f"path is {len(full)} characters, limit is {MAX_PATH}: {full}")
+    current = current_revision(design)
+    if revisions and current is None:
+        problems.append(f"revisions exist but there is no {CURRENT_FILE}: {rel(released)}")
+    elif current is not None and current not in revisions:
+        problems.append(f"{CURRENT_FILE} names '{current}', which is not a revision: {rel(released)}")
+
+
+def check_tree(root: Path) -> Tuple[List[str], List[str]]:
     """Compare root against the schema. Returns (problems, notes)."""
     require_root(root)
     problems: List[str] = []
     notes: List[str] = []
 
-    marker = read_marker(root)
+    marker = read_json(root / MARKER)
     if marker is None:
         problems.append(f"no {MARKER}: this folder has not been initialized")
     elif marker.get("schema") != SCHEMA_VERSION:
         problems.append(f"schema is {marker.get('schema')}, this tool expects {SCHEMA_VERSION}")
-
-    for rel in DIRS:
-        if not (root / rel).is_dir():
-            problems.append(f"missing folder: {rel}/")
 
     for rel, text in tool_docs().items():
         path = root / rel
@@ -233,34 +266,72 @@ def check_tree(root: Path) -> tuple:
         elif path.read_text(encoding="utf-8") != text:
             notes.append(f"{rel} differs from this version of the tool (init --update-docs rewrites it)")
 
-    managed = {rel.split("/")[0] for rel in DIRS} | {"README.md", SCHEMA_DOC}
+    # At the root: hubs are folders; the only files are the store's own docs.
     for entry in sorted(os.listdir(root)):
-        if not ignored(entry) and entry not in managed:
-            notes.append(f"unmanaged at the root: {entry}")
+        if ignored(entry) or entry in ("README.md", SCHEMA_DOC):
+            continue
+        if not (root / entry).is_dir():
+            notes.append(f"loose file at the root: {entry}")
+        elif entry.startswith("_") and entry not in (INDEX_DIRNAME, OUTBOX_DIRNAME):
+            notes.append(f"unknown folder at the root: {entry}")
 
-    for area in NAMED_AREAS:
-        for dirpath, dirnames, filenames in os.walk(root / area):
-            dirnames[:] = [d for d in dirnames if not ignored(d)]
-            for name in dirnames + [f for f in filenames if not ignored(f)]:
-                rel = os.path.relpath(os.path.join(dirpath, name), root)
-                if not valid_name(name):
-                    problems.append(f"name breaks the naming rule: {rel}")
-                if len(rel) >= MAX_PATH:
-                    problems.append(f"path is {len(rel)} characters, limit is {MAX_PATH}: {rel}")
+    seen: Dict[str, str] = {}
+    for design in find_designs(root):
+        rel = os.path.relpath(design, root)
+        try:
+            info = read_json(design / DESIGN_FILE) or {}
+        except TreeError as exc:
+            problems.append(str(exc))
+            continue
+        item_id = info.get("fusion_item_id")
+        if not item_id:
+            problems.append(f"{DESIGN_FILE} has no fusion_item_id: {rel}")
+        elif item_id in seen:
+            problems.append(f"two folders claim the same Fusion item: {seen[item_id]} and {rel}")
+        else:
+            seen[item_id] = rel
+        if (design / DELETED_MARKER).exists():
+            notes.append(f"deleted in the cloud, kept here: {rel}")
+        check_released(root, design, problems)
 
     return problems, notes
 
 
-def add_dirs(root: Path, name: str, rels: List[str], dry_run: bool = False,
-             out: Callable[[str], None] = print) -> int:
-    require_root(root)
-    if read_marker(root) is None:
-        raise TreeError(f"{root} has not been initialized. Run init first.")
-    if not NAME_RE.match(name) or name.startswith("_"):
+def build_index(root: Path, dry_run: bool = False, out: Callable[[str], None] = print) -> int:
+    """Write _index/parts.csv: one row per design, so a part number finds its folder."""
+    require_store(root)
+    rows = []
+    for design in find_designs(root):
+        info = read_json(design / DESIGN_FILE) or {}
+        rows.append({
+            "part_number": info.get("part_number") or "",
+            "name": info.get("name") or design.name,
+            "kind": info.get("kind") or "",
+            "hub": info.get("hub") or "",
+            "project": info.get("project") or "",
+            "path": os.path.relpath(design, root),
+            "current_revision": current_revision(design) or "",
+            "wip_version": (info.get("wip") or {}).get("version_number") or "",
+            "deleted_in_cloud": "yes" if (design / DELETED_MARKER).exists() else "",
+        })
+    rows.sort(key=lambda r: (r["part_number"] == "", r["part_number"], r["path"]))
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=INDEX_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    sc = Scaffold(root, dry_run, out)
+    sc.write(f"{INDEX_DIRNAME}/{PARTS_INDEX}", buf.getvalue(), update=True)
+    out(f"{len(rows)} design(s), {sum(1 for r in rows if r['part_number'])} with a part number.")
+    return sc.changed
+
+
+def add_machine(root: Path, name: str, dry_run: bool = False, out: Callable[[str], None] = print) -> int:
+    """A flat, safely named folder a machine can mount. The release tool copies into it; it is never a file's home."""
+    require_store(root)
+    if not NAME_RE.match(name):
         raise TreeError(f"'{name}' breaks the naming rule: lowercase letters, digits, '-', '_', '.' only")
     sc = Scaffold(root, dry_run, out)
-    for rel in rels:
-        sc.mkdir(rel.format(name=name))
+    sc.mkdir(f"{OUTBOX_DIRNAME}/{name}")
     return sc.changed
 
 
@@ -268,7 +339,7 @@ def add_dirs(root: Path, name: str, rels: List[str], dry_run: bool = False,
 
 def summarize(changed: int, dry_run: bool) -> None:
     if not changed:
-        print("Nothing to do. The tree is already in place.")
+        print("Nothing to do.")
     elif dry_run:
         print(f"{changed} change(s) would be made. Nothing was written.")
     else:
@@ -277,56 +348,54 @@ def summarize(changed: int, dry_run: bool) -> None:
 
 def cmd_init(args: argparse.Namespace) -> None:
     root = Path(args.root)
-    print(f"{'Would scaffold' if args.dry_run else 'Scaffolding'} {root} (schema {SCHEMA_VERSION})")
+    print(f"{'Would set up' if args.dry_run else 'Setting up'} {root} (schema {SCHEMA_VERSION})")
     summarize(init_tree(root, args.dry_run, args.update_docs), args.dry_run)
 
 
 def cmd_check(args: argparse.Namespace) -> None:
-    problems, notes = check_tree(Path(args.root))
+    root = Path(args.root)
+    problems, notes = check_tree(root)
     for line in problems:
         print(f"  PROBLEM  {line}")
     for line in notes:
         print(f"  note     {line}")
-    print(f"{len(problems)} problem(s), {len(notes)} note(s).")
+    print(f"{sum(1 for _ in find_designs(root))} design(s), {len(problems)} problem(s), {len(notes)} note(s).")
     if problems:
         sys.exit(1)
 
 
+def cmd_index(args: argparse.Namespace) -> None:
+    summarize(build_index(Path(args.root), args.dry_run), args.dry_run)
+
+
 def cmd_add_machine(args: argparse.Namespace) -> None:
-    rels = ["nc/{name}", "nc/_prove-out/{name}"]
-    summarize(add_dirs(Path(args.root), args.name, rels, args.dry_run), args.dry_run)
-
-
-def cmd_add_printer(args: argparse.Namespace) -> None:
-    rels = ["library/print-profiles/{name}"]
-    summarize(add_dirs(Path(args.root), args.name, rels, args.dry_run), args.dry_run)
+    summarize(add_machine(Path(args.root), args.name, args.dry_run), args.dry_run)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Scaffold and check the canonical shop tree.")
+    p = argparse.ArgumentParser(description="Set up and check an MCAD_base file store.")
     sub = p.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("init", help="create whatever is missing; never overwrites or deletes")
-    s.add_argument("root", help="the share or folder to build the tree in")
+    s = sub.add_parser("init", help="mark a folder as a store and write its docs; never overwrites or deletes")
+    s.add_argument("root", help="the folder to use as the store root")
     s.add_argument("--dry-run", action="store_true", help="show what would be created")
-    s.add_argument("--update-docs", action="store_true", help="rewrite SCHEMA.md and the READMEs if they are out of date")
+    s.add_argument("--update-docs", action="store_true", help="rewrite SCHEMA.md and README.md if they are out of date")
     s.set_defaults(func=cmd_init)
 
-    s = sub.add_parser("check", help="compare a tree against the schema")
+    s = sub.add_parser("check", help="validate the store against the schema")
     s.add_argument("root")
     s.set_defaults(func=cmd_check)
 
-    s = sub.add_parser("add-machine", help="add a CNC machine's folders under nc/")
+    s = sub.add_parser("index", help="write _index/parts.csv, a part-number lookup")
+    s.add_argument("root")
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(func=cmd_index)
+
+    s = sub.add_parser("add-machine", help="add a machine-facing folder under _outbox/")
     s.add_argument("root")
     s.add_argument("name", help="e.g. haas-vf2")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_add_machine)
-
-    s = sub.add_parser("add-printer", help="add a printer's profile folder under library/print-profiles/")
-    s.add_argument("root")
-    s.add_argument("name", help="e.g. bambu-p1s")
-    s.add_argument("--dry-run", action="store_true")
-    s.set_defaults(func=cmd_add_printer)
 
     return p
 

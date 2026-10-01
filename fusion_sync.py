@@ -11,13 +11,19 @@ real file (native .f3d/.f3z by default, optionally STEP/STL/etc.), and writes
 the result into a folder tree that mirrors the cloud. Non-Fusion files that
 were uploaded to a project (PDFs, STLs, DXFs, ...) are downloaded as-is.
 
+Every cloud item becomes a folder. Sync writes only wip/, design.json,
+history.jsonl, and the DELETED_IN_CLOUD marker inside it; everything else in
+the folder (released/, builds/, loose files) is left alone. A rename or move
+in the cloud moves the folder on disk. A delete in the cloud marks the folder
+and removes nothing. See docs/CANONICAL_TREE.md.
+
 Runs are incremental: a manifest remembers which cloud version each local
 file came from, so re-running only fetches what changed.
 
 Standard library only. Python 3.9+.
 
 Quick start:
-    ./fusion_sync.py init --client-id <APS_CLIENT_ID> --root ~/FusionCAD
+    ./fusion_sync.py init --client-id <APS_CLIENT_ID> --root /Volumes/MCAD/MCAD_base
     ./fusion_sync.py auth              # opens browser once, caches refresh token
     ./fusion_sync.py hubs              # sanity check
     ./fusion_sync.py sync              # mirror everything
@@ -70,6 +76,15 @@ STATE_DIRNAME = ".fusion-sync"
 MANIFEST_NAME = "manifest.json"
 VERSIONS_DIRNAME = "_versions"
 
+# Every cloud item gets its own folder. Sync writes only these inside it; the
+# rest of the folder (released/, builds/, loose files) belongs to other tools
+# and to people.
+WIP_DIRNAME = "wip"
+DESIGN_FILE = "design.json"
+HISTORY_FILE = "history.jsonl"
+DELETED_MARKER = "DELETED_IN_CLOUD"
+STORE_SCHEMA = 2
+
 # Preferred export formats per Fusion item kind when the user asks for "native".
 # f3z is the archive form used when a design references external components.
 NATIVE_PREFERENCE = {
@@ -99,6 +114,10 @@ def safe_name(name: str) -> str:
     """Make a cloud display name safe as a single path component."""
     cleaned = _UNSAFE.sub("_", name).strip().rstrip(".")
     return cleaned or "_unnamed"
+
+
+def now_stamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 def read_json(path: Path, default: Any = None) -> Any:
@@ -532,14 +551,96 @@ class Syncer:
         self.manifest_path = self.state_dir / MANIFEST_NAME
         self.manifest: Dict[str, Any] = read_json(self.manifest_path, {"items": {}}) or {"items": {}}
         self.stats = SyncStats()
+        self.seen: set = set()  # item ids found in the cloud this pass
 
     # -- persistence ---------------------------------------------------------- #
 
     def save_manifest(self) -> None:
         if self.dry_run:
             return
-        self.manifest["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        self.manifest["updated_at"] = now_stamp()
         write_json(self.manifest_path, self.manifest)
+
+    def _append_history(self, item_dir: Path, event: Dict[str, Any]) -> None:
+        with (item_dir / HISTORY_FILE).open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"at": now_stamp(), **event}, sort_keys=True) + "\n")
+
+    def _write_design_info(self, item_dir: Path, item_id: str, ctx: Dict[str, str], record: Dict[str, Any]) -> None:
+        """design.json is shared with people and other tools; only the keys set here are ours."""
+        path = item_dir / DESIGN_FILE
+        info = read_json(path, {}) or {}
+        info.setdefault("part_number", None)
+        info.setdefault("description", None)
+        info.update({
+            "schema": STORE_SCHEMA,
+            "fusion_item_id": item_id,
+            "name": record["display_name"],
+            "kind": record["kind"],
+            "hub": ctx["hub"],
+            "project": ctx["project"],
+            "wip": {
+                "version_id": record["version_id"],
+                "version_number": record["version_number"],
+                "last_modified": record.get("last_modified"),
+                "synced_at": record.get("synced_at"),
+                "files": sorted(Path(rel).name for rel in record.get("files", {}).values()),
+            },
+        })
+        write_json(path, info)
+
+    def _item_dir(self, item_id: str, candidate: Path) -> Path:
+        """Two cloud items can share a display name; the later one gets a tag from its id."""
+        info = read_json(candidate / DESIGN_FILE)
+        if info and info.get("fusion_item_id") not in (None, item_id):
+            tag = hashlib.sha1(item_id.encode()).hexdigest()[:8]
+            return candidate.with_name(f"{candidate.name} [{tag}]")
+        return candidate
+
+    def _follow_move(self, item_id: str, record: Dict[str, Any], item_dir: Path, wanted: Dict[str, Path]) -> bool:
+        """A rename or move in the cloud becomes a move on disk, so releases and loose files travel with the design."""
+        old_rel = record.get("dir")
+        new_rel = str(item_dir.relative_to(self.cfg.root))
+        if not old_rel or old_rel == new_rel:
+            return False
+        old_dir = self.cfg.root / old_rel
+        if not old_dir.is_dir() or item_dir.exists():
+            return False
+        if self.dry_run:
+            log(f"    would move {old_rel} -> {new_rel}")
+            return True
+        item_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(old_dir), str(item_dir))
+        files: Dict[str, str] = {}
+        for fmt, rel in record.get("files", {}).items():
+            current = item_dir / Path(rel).relative_to(old_rel)
+            target = wanted.get(fmt, current)
+            if current.exists() and current != target:
+                current.rename(target)
+                current = target
+            files[fmt] = str(current.relative_to(self.cfg.root))
+        record["files"] = files
+        record["dir"] = new_rel
+        self.manifest["items"][item_id] = record
+        self._append_history(item_dir, {"event": "moved", "from": old_rel, "to": new_rel})
+        log(f"    > moved {old_rel} -> {new_rel}")
+        return True
+
+    def _mark_deleted(self) -> None:
+        """Items that vanished from the cloud keep their folder and get a marker. Nothing is removed."""
+        # Only a complete, clean pass can tell "deleted" from "not looked at".
+        if self.dry_run or self.stats.failed or self.hub_filter or self.project_filter or not self.seen:
+            return
+        for item_id, record in self.manifest["items"].items():
+            if item_id in self.seen or record.get("deleted_in_cloud") or not record.get("dir"):
+                continue
+            item_dir = self.cfg.root / record["dir"]
+            if not item_dir.is_dir():
+                continue
+            stamp = now_stamp()
+            (item_dir / DELETED_MARKER).write_text(f"Not found in the Fusion cloud as of {stamp}.\n", encoding="utf-8")
+            record["deleted_in_cloud"] = stamp
+            self._append_history(item_dir, {"event": "deleted_in_cloud"})
+            log(f"    x {record['dir']}: gone from the cloud, folder kept and marked")
 
     # -- traversal ------------------------------------------------------------ #
 
@@ -556,32 +657,39 @@ class Syncer:
                     continue
                 log(f"  Project: {proj_name}")
                 local_project = self.cfg.root / safe_name(hub_name) / safe_name(proj_name)
+                ctx = {"hub": hub_name, "project": proj_name}
                 try:
-                    for top in self.api.top_folders(hub["id"], project["id"]):
-                        self._walk_folder(project["id"], top, local_project / safe_name(top["attributes"]["name"]))
+                    tops = list(self.api.top_folders(hub["id"], project["id"]))
+                    for top in tops:
+                        # A project with one root folder (the usual Fusion case) is flattened,
+                        # so the disk tree matches what the Fusion data panel shows.
+                        local = local_project if len(tops) == 1 else local_project / safe_name(top["attributes"]["name"])
+                        self._walk_folder(project["id"], top, local, ctx)
                 except ApiError as exc:
                     log(f"  ! skipping project {proj_name}: {exc}", err=True)
                     self.stats.failed += 1
                 self.save_manifest()
+        self._mark_deleted()
         self.save_manifest()
         s = self.stats
         log(f"Done. scanned={s.scanned} downloaded={s.downloaded} skipped={s.skipped} failed={s.failed} bytes={s.bytes:,}")
         return s
 
-    def _walk_folder(self, project_id: str, folder: Dict[str, Any], local_dir: Path) -> None:
+    def _walk_folder(self, project_id: str, folder: Dict[str, Any], local_dir: Path, ctx: Dict[str, str]) -> None:
         for entry in self.api.folder_contents(project_id, folder["id"]):
             attrs = entry.get("attributes", {})
             if attrs.get("hidden"):
                 continue
             if entry["type"] == "folders":
-                self._walk_folder(project_id, entry, local_dir / safe_name(attrs.get("displayName") or attrs.get("name", "folder")))
+                self._walk_folder(project_id, entry, local_dir / safe_name(attrs.get("displayName") or attrs.get("name", "folder")), ctx)
             elif entry["type"] == "items":
-                self._sync_item(project_id, entry, local_dir)
+                self._sync_item(project_id, entry, local_dir, ctx)
 
     # -- per-item ------------------------------------------------------------- #
 
-    def _sync_item(self, project_id: str, item: Dict[str, Any], local_dir: Path) -> None:
+    def _sync_item(self, project_id: str, item: Dict[str, Any], local_dir: Path, ctx: Dict[str, str]) -> None:
         self.stats.scanned += 1
+        self.seen.add(item["id"])
         attrs = item.get("attributes", {})
         tip = item.get("_tip")
         if not tip:
@@ -605,12 +713,13 @@ class Syncer:
         rel_dir = local_dir.relative_to(self.cfg.root)
         base = safe_name(display)
 
-        # Which files do we want for this item?
+        # Which files do we want for this item? They all land in <item folder>/wip/.
         wanted: Dict[str, Path] = {}  # fmt -> local path
         if kind == "other" and storage_href:
             # Uploaded file: download original bytes as-is, keep its own extension.
-            name = tip["attributes"].get("name") or display
-            wanted["raw"] = local_dir / safe_name(name)
+            name = safe_name(tip["attributes"].get("name") or display)
+            item_dir = self._item_dir(item["id"], local_dir / name)
+            wanted["raw"] = item_dir / WIP_DIRNAME / name
         else:
             try:
                 available = self.api.download_formats(project_id, version_id)
@@ -626,10 +735,27 @@ class Syncer:
             for ext in (".f3d", ".f3z"):
                 if stem.lower().endswith(ext):
                     stem = stem[: -len(ext)]
+            item_dir = self._item_dir(item["id"], local_dir / stem)
             for fmt in fmts:
-                wanted[fmt] = local_dir / f"{stem}.{fmt}"
+                wanted[fmt] = item_dir / WIP_DIRNAME / f"{stem}.{fmt}"
+
+        if record.get("deleted_in_cloud") and not self.dry_run:
+            # It came back (restored in Fusion, or the earlier pass missed it).
+            marker = self.cfg.root / record["dir"] / DELETED_MARKER
+            if marker.exists():
+                marker.unlink()
+            del record["deleted_in_cloud"]
+            self._append_history(self.cfg.root / record["dir"], {"event": "restored_in_cloud"})
+
+        moved = self._follow_move(item["id"], record, item_dir, wanted)
+        if moved and not self.dry_run:
+            record["display_name"] = display
+            self._write_design_info(item_dir, item["id"], ctx, record)
 
         up_to_date = record.get("version_id") == version_id
+        if moved and self.dry_run and up_to_date:
+            self.stats.skipped += 1
+            return
         todo = {fmt: p for fmt, p in wanted.items()
                 if not (up_to_date and p.exists() and record.get("files", {}).get(fmt) == str(p.relative_to(self.cfg.root)))}
 
@@ -647,11 +773,12 @@ class Syncer:
             for fmt, rel in record.get("files", {}).items():
                 old = self.cfg.root / rel
                 if old.exists():
-                    keep = self.state_dir / VERSIONS_DIRNAME / rel_dir / f"{old.stem}.v{record.get('version_number', '?')}{old.suffix}"
+                    keep = old.parent / VERSIONS_DIRNAME / f"{old.stem}.v{record.get('version_number', '?')}{old.suffix}"
                     keep.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(old), str(keep))
 
         files = dict(record.get("files", {})) if up_to_date else {}
+        fetched: List[str] = []
         for fmt, dest in todo.items():
             try:
                 if fmt == "raw":
@@ -661,6 +788,7 @@ class Syncer:
                         self.api.export_version(project_id, version_id, fmt)
                 size = self.api.download_to(href, dest)
                 files[fmt] = str(dest.relative_to(self.cfg.root))
+                fetched.append(dest.name)
                 self.stats.downloaded += 1
                 self.stats.bytes += size
                 log(f"    + {label} -> {dest.relative_to(self.cfg.root)} ({size:,} bytes)")
@@ -669,7 +797,7 @@ class Syncer:
                 log(f"    ! {label} [{fmt}]: {exc}", err=True)
 
         if files:
-            self.manifest["items"][item["id"]] = {
+            record = {
                 "display_name": display,
                 "kind": kind,
                 "extension_type": ext_type,
@@ -677,9 +805,15 @@ class Syncer:
                 "version_id": version_id,
                 "version_number": version_no,
                 "last_modified": tip.get("attributes", {}).get("lastModifiedTime"),
+                "dir": str(item_dir.relative_to(self.cfg.root)),
                 "files": files,
-                "synced_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "synced_at": now_stamp(),
             }
+            self.manifest["items"][item["id"]] = record
+            self._write_design_info(item_dir, item["id"], ctx, record)
+            if fetched:
+                self._append_history(item_dir, {"event": "synced", "version_number": version_no,
+                                                "version_id": version_id, "files": sorted(fetched)})
 
 
 # --------------------------------------------------------------------------- #

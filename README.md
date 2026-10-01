@@ -1,8 +1,9 @@
 # MCAD_base
 
 Working name. Tools for keeping mechanical CAD on a NAS in a layout that
-survives SMB shares, CNC controls, and an audit: a nightly backup of the
-Fusion cloud on one side, immutable release records on the other.
+survives an audit: a file store shaped like the Fusion cloud, where every
+design has one folder holding its latest cloud export, its frozen released
+revisions, and the record of what was built from them.
 
 Standard library Python only. Python 3.9+.
 
@@ -10,78 +11,87 @@ Standard library Python only. Python 3.9+.
 
 | File | What it does |
 |---|---|
-| `mcad_tree.py` | Scaffolds the canonical shop tree on a share and checks that it still matches the schema. |
-| `fusion_sync.py` | Mirrors Fusion cloud hubs to disk, one way, incrementally. Fills `mirror/`. See [docs/FUSION_SYNC.md](docs/FUSION_SYNC.md). |
-| `docs/CANONICAL_TREE.md` | The tree, its rules, the release manifest schema. Copied onto the share as `SCHEMA.md`. |
-| `docs/PROJECT_LAYOUT.md` | Layout of a single part's working folder. |
-| `tests/` | Offline tests for both tools. |
+| `mcad_tree.py` | Marks a folder as a store, checks it against the schema, writes the part-number index. |
+| `fusion_sync.py` | Mirrors Fusion cloud hubs into the store, one way, incrementally. Creates the hub, project, and design folders. See [docs/FUSION_SYNC.md](docs/FUSION_SYNC.md). |
+| `docs/CANONICAL_TREE.md` | The layout, its rules, the file formats, and the ISO mapping. Copied into the store as `SCHEMA.md`. |
+| `tests/` | Offline tests for both tools and for the two working together. |
 
-## Scaffold a tree
+## The store
+
+```
+<root>/
+  <hub>/<project>/<folder>/.../<design>/
+    design.json       Fusion item id, part number
+    history.jsonl     ledger: synced, moved, released, built
+    wip/              latest cloud export; sync tool only, overwritten
+    released/         rev-a/, rev-b/, CURRENT; release tool only, frozen
+    builds/           what actually ran
+    (anything else)   yours
+  _index/parts.csv    generated: part number -> folder
+  _outbox/<machine>/  flat copies for machines, only if needed
+```
+
+The tree follows Fusion, so a design is on disk where it is in the data
+panel. Identity is the Fusion item id in `design.json`, not the path: a
+rename or move in the cloud moves the folder, and a delete in the cloud
+marks the folder and removes nothing.
+
+Backup and release are different things and both live in the design's
+folder. `wip/` changes whenever the design does. A revision under
+`released/` never changes after it is signed off.
+
+## Set up a store
 
 ```sh
 ./mcad_tree.py init /Volumes/MCAD/MCAD_base --dry-run   # show what would be created
 ./mcad_tree.py init /Volumes/MCAD/MCAD_base             # create it
-./mcad_tree.py check /Volumes/MCAD/MCAD_base            # does the share still match?
-./mcad_tree.py add-machine /Volumes/MCAD/MCAD_base haas-vf2
-./mcad_tree.py add-printer /Volumes/MCAD/MCAD_base bambu-p1s
 ```
 
-```
-<root>/
-  .mcad-tree.json     schema version marker
-  README.md
-  SCHEMA.md           copy of docs/CANONICAL_TREE.md
-  mirror/             nightly backup of the Fusion cloud; sync tool only
-  released/           <part-number>/<rev>/, frozen after sign-off; release tool only
-  nc/                 what the machines mount, copied from released/
-    _prove-out/       unreleased programs, kept apart
-  print/
-    queue/  builds/  archive/
-  library/
-    posts/  tools/  machines/  print-profiles/  templates/  standards/
-  logs/
-```
+`init` writes `README.md`, `SCHEMA.md`, and a schema version marker. It
+creates no folders; the sync tool builds the tree from the cloud.
 
-Unlike a project scaffolder that runs once, `init` is meant to be re-run for
-the life of the share:
-
-- It only adds what is missing. It never overwrites, moves, or deletes.
-  Anything already on the share is left where it is, and `check` lists it as
-  unmanaged.
+- It never overwrites, moves, or deletes. `--update-docs` rewrites the two
+  docs when the store's copies are out of date.
 - It refuses to run if the root folder does not exist, so an unmounted share
-  does not get a tree built on the local disk in its place.
-- The tree is defined as data at the top of `mcad_tree.py`. Changing the
-  layout is an edit there plus a bump of `SCHEMA_VERSION`; the marker file on
-  the share records which version it was built with.
-- `init --update-docs` rewrites `SCHEMA.md` and the per-folder READMEs when
-  the copies on the share are out of date.
+  does not get a store built on the local disk in its place.
 
-`check` exits non-zero on missing folders, a schema mismatch, or names that
-break the naming rule (lowercase ASCII, digits, `-`, `_`, `.`, paths under
-200 characters). `mirror/` is exempt from the naming rule because it carries
-the cloud's own names.
-
-## Fill the mirror
+## Fill it from Fusion
 
 ```sh
-./fusion_sync.py init --client-id <APS_CLIENT_ID> --root /Volumes/MCAD/MCAD_base/mirror
+./fusion_sync.py init --client-id <APS_CLIENT_ID> --root /Volumes/MCAD/MCAD_base
 ./fusion_sync.py auth
+./fusion_sync.py sync --dry-run
 ./fusion_sync.py sync --formats native,step
 ```
+
+## Check and index
+
+```sh
+./mcad_tree.py check /Volumes/MCAD/MCAD_base   # non-zero exit on problems
+./mcad_tree.py index /Volumes/MCAD/MCAD_base   # writes _index/parts.csv
+./mcad_tree.py add-machine /Volumes/MCAD/MCAD_base haas-vf2
+```
+
+`check` reports, per design: a missing or duplicated Fusion item id, a
+revision without `manifest.json` or `SHA256SUMS`, a `CURRENT` that names no
+revision, and names inside `released/` that break the naming rule (lowercase
+ASCII, digits, `-`, `_`, `.`, path under 200 characters). Names above the
+revision folder come from Fusion and are not policed.
 
 ## Tests
 
 ```sh
 python3 tests/test_mcad_tree.py
 python3 tests/test_fusion_sync.py
+python3 tests/test_store.py
 ```
 
 ## Not built yet
 
-- Release mode: build `released/<part>/<rev>/` from a named Fusion version,
-  write the manifest and `SHA256SUMS`, copy NC programs to `nc/`, drop sliced
-  files in `print/queue/`.
-- Nightly verify of `SHA256SUMS` into `logs/verify.log`.
-- Sync: treat cloud renames and moves as local moves, and explicit handling
-  of cloud deletes.
+- Release: build `released/<rev>/` from a named Fusion version, write the
+  manifest and `SHA256SUMS`, set `CURRENT`, mark the prior revision
+  `OBSOLETE`, append to `history.jsonl`, copy to `_outbox/` if a machine
+  needs it.
+- Verify: re-check every `SHA256SUMS` on a schedule.
 - The Fusion add-in that provides the Release command.
+- A run of `fusion_sync.py` against a live Autodesk account.

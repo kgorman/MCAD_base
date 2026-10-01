@@ -9,26 +9,46 @@ Fusion designs are not files on disk. They are versioned records in Autodesk's c
 `~/Library/Application Support/Autodesk/Autodesk Fusion 360/` is an opaque blob store,
 not something you can open, back up, or diff. This tool asks the cloud to export each
 design's latest version to a real file and writes it to a folder tree that mirrors
-your hubs, projects, and folders.
+your hubs, projects, and folders. Every cloud item becomes a folder, and the export
+goes in its `wip/` subfolder.
 
 ```
-~/FusionCAD/
+/Volumes/MCAD/MCAD_base/
   Kevin's Hub/
-    Shop Projects/
-      Bench Vise.f3d
-      Bench Vise.step
-      Fixtures/
-        Drill Jig.f3d
+    Bike/
+      Headset Spacers/
+        design.json              <- Fusion item id, part number, current wip version
+        history.jsonl            <- one line per sync, move, or cloud delete
+        wip/
+          Headset Spacers.f3d
+          Headset Spacers.step
+          _versions/             <- prior copies, kept when a design changes
+        released/                <- not sync's; never touched
       Reference/
-        vendor-part.pdf          <- uploaded files come down as-is
+        vendor-part.pdf/
+          wip/vendor-part.pdf    <- uploaded files come down as-is
   .fusion-sync/
     manifest.json                <- which cloud version each file came from
-    _versions/                   <- prior copies, kept when a design changes
     sync.log
 ```
 
 Runs are incremental. Only designs whose cloud version changed since the last run are
 re-exported.
+
+Inside an item's folder, sync writes `wip/`, `design.json`, `history.jsonl`, and the
+`DELETED_IN_CLOUD` marker. It never touches anything else there, so release records and
+loose files are safe from it. In `design.json` it owns its own keys and preserves the
+rest, including `part_number`.
+
+| In the cloud | On disk |
+|---|---|
+| New version of a design | `wip/` is updated; the prior copy moves to `wip/_versions/` |
+| Design renamed or moved | The whole folder moves, releases and loose files included. No re-export. |
+| Design deleted | The folder stays and gets a `DELETED_IN_CLOUD` marker. Nothing is removed. |
+| Deleted design restored | The marker is removed. |
+
+Deletes are only recognized on a complete pass: no `--hub` or `--project` filter and no
+errors. A partial pass cannot tell "deleted" from "not looked at".
 
 ## One-time setup
 
@@ -41,7 +61,7 @@ re-exported.
 
 ```sh
 chmod +x fusion_sync.py
-./fusion_sync.py init --client-id <CLIENT_ID> --root ~/FusionCAD
+./fusion_sync.py init --client-id <CLIENT_ID> --root /Volumes/MCAD/MCAD_base
 ./fusion_sync.py auth        # browser opens once; refresh token is cached
 ./fusion_sync.py hubs        # lists hubs and projects to confirm access
 ```
@@ -55,7 +75,7 @@ Config lives in `~/.config/fusion-sync/config.json`, tokens in
 ./fusion_sync.py sync                        # mirror everything, native format
 ./fusion_sync.py sync --dry-run              # see what would change
 ./fusion_sync.py sync --formats native,step  # also keep a STEP next to each design
-./fusion_sync.py sync --project "Shop Projects"
+./fusion_sync.py sync --project "Bike"
 ./fusion_sync.py status
 ```
 
@@ -88,7 +108,7 @@ Or in the foreground: `./fusion_sync.py watch --interval 900`.
    directly from their storage object via a signed S3 URL.
 5. **Write**: download to a temp file, atomically rename into place, update the manifest.
    When a design's version changes, the previous local copy moves to
-   `.fusion-sync/_versions/`.
+   `wip/_versions/` in the design's folder.
 
 Rate limits and transient errors get exponential backoff with `Retry-After` honored.
 
@@ -100,6 +120,8 @@ Rate limits and transient errors get exponential backoff with `Retry-After` hono
   first run; later runs only touch what changed.
 - Only hubs your Autodesk account can see through the API are mirrored. Personal hubs
   work; some education or admin-locked team hubs may not expose the Data Management API.
+- A project's single root folder is flattened so the path reads `hub/project/design`.
+  This has not yet been confirmed against a live hub.
 - Design history is preserved inside `.f3d`/`.f3z` archives. STEP/STL exports are
   geometry only.
 
