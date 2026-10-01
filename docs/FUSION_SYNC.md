@@ -1,0 +1,112 @@
+# fusion_sync
+
+Part of MCAD_base. See the [README](../README.md) for how this fits with the shop tree.
+
+Keep a local, browsable mirror of every Fusion 360 design in your Autodesk cloud hubs.
+
+Fusion designs are not files on disk. They are versioned records in Autodesk's cloud
+(Fusion Team / Autodesk Docs). The local cache Fusion keeps under
+`~/Library/Application Support/Autodesk/Autodesk Fusion 360/` is an opaque blob store,
+not something you can open, back up, or diff. This tool asks the cloud to export each
+design's latest version to a real file and writes it to a folder tree that mirrors
+your hubs, projects, and folders.
+
+```
+~/FusionCAD/
+  Kevin's Hub/
+    Shop Projects/
+      Bench Vise.f3d
+      Bench Vise.step
+      Fixtures/
+        Drill Jig.f3d
+      Reference/
+        vendor-part.pdf          <- uploaded files come down as-is
+  .fusion-sync/
+    manifest.json                <- which cloud version each file came from
+    _versions/                   <- prior copies, kept when a design changes
+    sync.log
+```
+
+Runs are incremental. Only designs whose cloud version changed since the last run are
+re-exported.
+
+## One-time setup
+
+1. Create an app at <https://aps.autodesk.com/myapps>.
+   - Type: **Desktop, Mobile, Single-Page App** (uses PKCE, no secret needed).
+   - Callback URL: `http://localhost:8912/callback`
+   - APIs: **Data Management API** (the default set is fine).
+   - Copy the **Client ID**.
+2. Configure and sign in:
+
+```sh
+chmod +x fusion_sync.py
+./fusion_sync.py init --client-id <CLIENT_ID> --root ~/FusionCAD
+./fusion_sync.py auth        # browser opens once; refresh token is cached
+./fusion_sync.py hubs        # lists hubs and projects to confirm access
+```
+
+Config lives in `~/.config/fusion-sync/config.json`, tokens in
+`~/.config/fusion-sync/tokens.json` (mode 0600).
+
+## Daily use
+
+```sh
+./fusion_sync.py sync                        # mirror everything, native format
+./fusion_sync.py sync --dry-run              # see what would change
+./fusion_sync.py sync --formats native,step  # also keep a STEP next to each design
+./fusion_sync.py sync --project "Shop Projects"
+./fusion_sync.py status
+```
+
+`native` means the Fusion archive: `.f3z` when a design references external
+components, otherwise `.f3d`. Drawings export as PDF. Other formats accepted by the
+cloud exporter: `step`, `iges`, `sat`, `smt`, `stl`, `obj`, `fbx`, `dwg`, `dxf`, `pdf`.
+Formats the cloud cannot produce for a given item are skipped with a note.
+
+## Run it in the background
+
+```sh
+./fusion_sync.py install-launchd --interval 900   # every 15 minutes, survives reboots
+./fusion_sync.py uninstall-launchd
+```
+
+Or in the foreground: `./fusion_sync.py watch --interval 900`.
+
+## How it works
+
+1. **Auth**: 3-legged OAuth 2.0 with PKCE against `authentication/v2`. The refresh
+   token is used silently after the first sign-in.
+2. **Walk**: `GET project/v1/hubs` → `.../projects` → `.../topFolders` →
+   `GET data/v1/projects/{p}/folders/{f}/contents` (recursive, paginated). Each item's
+   tip version comes back in the `included` array.
+3. **Decide**: compare the tip version id with `manifest.json`. Unchanged items are skipped.
+4. **Export**: for Fusion items, `GET .../versions/{v}/downloadFormats` lists what the
+   cloud can produce; `POST data/v1/projects/{p}/downloads` starts an export job;
+   `GET .../jobs/{job}` is polled until it turns into a `downloads` object whose
+   `relationships.storage` points at the file. Uploaded (non-Fusion) files are fetched
+   directly from their storage object via a signed S3 URL.
+5. **Write**: download to a temp file, atomically rename into place, update the manifest.
+   When a design's version changes, the previous local copy moves to
+   `.fusion-sync/_versions/`.
+
+Rate limits and transient errors get exponential backoff with `Retry-After` honored.
+
+## Limitations
+
+- One-way, cloud to disk. Editing a local `.f3d` does not upload it. Upload it through
+  Fusion if you want it back in the cloud.
+- Exports are cloud-side jobs. A big assembly can take a minute or two per format on the
+  first run; later runs only touch what changed.
+- Only hubs your Autodesk account can see through the API are mirrored. Personal hubs
+  work; some education or admin-locked team hubs may not expose the Data Management API.
+- Design history is preserved inside `.f3d`/`.f3z` archives. STEP/STL exports are
+  geometry only.
+
+## Alternative: a Fusion add-in
+
+If you would rather not register an APS app, the same job can be done from inside
+Fusion with its Python add-in API (`adsk.core.Application.data` to walk hubs, then
+`exportManager` per design). That approach needs Fusion open and is slower because it
+loads each design, but it needs no cloud credentials. This tool was built the API way
+so it can run unattended.
