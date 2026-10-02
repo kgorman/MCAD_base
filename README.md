@@ -253,6 +253,10 @@ kind of tool may write, and everything it writes stays readable with the
 tools in this repository alone. The definition is in
 [docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#mcad_base-compatible).
 
+Building one with an AI coding agent? Point it at
+[docs/AGENTS.md](docs/AGENTS.md) first. It lists the rules, what `check`
+enforces, and how to test the result.
+
 ## What's here
 
 | File | What it does |
@@ -261,6 +265,7 @@ tools in this repository alone. The definition is in
 | `fusion_sync.py` | Mirrors Fusion cloud hubs into the store. |
 | `docs/CANONICAL_TREE.md` | The layout, its rules, the file formats, and the ISO mapping. Copied into the store as `SCHEMA.md`. |
 | `docs/FUSION_SYNC.md` | Setting up and running the Fusion sync. |
+| `docs/AGENTS.md` | What an AI coding agent needs to know to write compatible code. |
 | `tests/` | Offline tests for both tools and for the two working together. |
 
 ## Tests
