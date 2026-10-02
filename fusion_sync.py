@@ -87,16 +87,18 @@ STORE_MARKER = ".mcad-tree.json"  # written by mcad_tree.py init
 STORE_SCHEMA = 2
 __version__ = "0.1.1"  # the tools' version; kept in step with mcad_tree.py
 
-# Preferred export formats per Fusion item kind when the user asks for "native".
-# f3z is the archive form used when a design references external components.
+# What "native" means per Fusion item kind. A design keeps every one of its formats the cloud
+# has: the f3d, then the f3z archive, which also carries copies of the designs it references.
+# The other kinds keep the first format the cloud offers.
 NATIVE_PREFERENCE = {
-    "design": ["f3z", "f3d"],
+    "design": ["f3d", "f3z"],
     "drawing": ["pdf", "dwg"],
     "cam": ["f3d"],
     "other": [],
 }
 
-# What a Fusion design is stored as in the cloud. Kept in place of an export the cloud fails to build.
+# What a Fusion design is stored as in the cloud. Downloaded as it is, with no export job, so it
+# is still there when the cloud fails to build the archive.
 STORED_FORMAT = "f3d"
 
 JOB_POLL_SECONDS = 3
@@ -497,7 +499,8 @@ class Aps:
         """Turn an OSS object urn (or legacy OSS href) into a signed S3 URL."""
         m = self._OSS_URN.match(href_or_urn)
         if not m and "/oss/v2/buckets/" in href_or_urn:
-            parts = href_or_urn.split("/oss/v2/buckets/", 1)[1].split("/objects/", 1)
+            # The link the cloud gives carries a query (?scopes=...), which is not part of the object's name.
+            parts = href_or_urn.split("?", 1)[0].split("/oss/v2/buckets/", 1)[1].split("/objects/", 1)
             if len(parts) == 2:
                 m = re.match(r"([^/]+)/(.+)", f"{parts[0]}/{parts[1]}")
         if not m:
@@ -539,20 +542,23 @@ def item_kind(ext_type: str) -> str:
     return "other"
 
 
-def choose_formats(requested: List[str], available: List[str], kind: str) -> List[str]:
-    """Map the user's format list (which may contain 'native') to real formats."""
+def choose_formats(requested: List[str], available: List[str], kind: str, stored: bool = False) -> List[str]:
+    """Map the user's format list (which may contain 'native') to real formats.
+
+    `stored` says the cloud holds the design's own file, which needs no export to fetch.
+    """
     avail = [a.lower() for a in available]
+    if kind == "design" and stored and STORED_FORMAT not in avail:
+        avail.append(STORED_FORMAT)
     chosen: List[str] = []
     for want in requested:
         want = want.lower()
         if want == "native":
-            for pref in NATIVE_PREFERENCE.get(kind, []):
-                if pref in avail:
-                    chosen.append(pref)
-                    break
+            prefs = [p for p in NATIVE_PREFERENCE.get(kind, []) if p in avail]
+            if kind == "design":
+                chosen.extend(prefs or ([] if avail else ["f3d"]))  # downloadFormats unavailable; f3d is always valid for designs
             else:
-                if kind == "design" and not avail:
-                    chosen.append("f3d")  # downloadFormats unavailable; f3d is always valid for designs
+                chosen.extend(prefs[:1])
         elif want in avail or not avail:
             chosen.append(want)
     # de-dup, keep order
@@ -758,7 +764,7 @@ class Syncer:
             except ApiError as exc:
                 log(f"    ! cannot list export formats for {display}: {exc}", err=True)
                 available = []
-            fmts = choose_formats(self.formats, available, kind)
+            fmts = choose_formats(self.formats, available, kind, stored=bool(storage_href))
             if not fmts:
                 log(f"    - {rel_dir}/{display}: no exportable format (available: {available or 'none'})")
                 self.stats.skipped += 1
@@ -817,23 +823,30 @@ class Syncer:
 
         files = dict(record.get("files", {})) if up_to_date else {}
         fetched: List[str] = []
+        failed_now: List[str] = []  # exports the cloud failed to build on this pass
         for fmt, dest in todo.items():
             try:
                 key = fmt
-                if fmt == "raw":
+                if fmt == "raw" or (kind == "design" and fmt == STORED_FORMAT and storage_href):
                     href = storage_href
                 else:
                     try:
                         href = self.api.existing_downloads(project_id, version_id, fmt) or \
                             self.api.export_version(project_id, version_id, fmt)
                     except RuntimeError as exc:
-                        if not (kind == "design" and fmt in NATIVE_PREFERENCE["design"] and storage_href):
+                        # An HTTP error is the network or the service, not this design; the next run retries it.
+                        if isinstance(exc, ApiError) or not (kind == "design" and fmt in NATIVE_PREFERENCE["design"] and storage_href):
                             raise
-                        # The cloud could not build the archive. Keep the design file as the cloud
-                        # stores it, which is better than keeping nothing.
-                        log(f"    ~ {label} [{fmt}]: export failed, keeping the stored .{STORED_FORMAT} instead ({exc})", err=True)
-                        href, key, dest = storage_href, STORED_FORMAT, item_dir / WIP_DIRNAME / f"{stem}.{STORED_FORMAT}"
+                        # The cloud could not build the archive. The design file as the cloud
+                        # stores it stands in, which is better than keeping nothing.
                         export_failed[fmt] = version_id
+                        failed_now.append(fmt)
+                        stored_dest = item_dir / WIP_DIRNAME / f"{stem}.{STORED_FORMAT}"
+                        if files.get(STORED_FORMAT) == str(stored_dest.relative_to(self.cfg.root)) and stored_dest.is_file():
+                            log(f"    ~ {label} [{fmt}]: export failed, the stored .{STORED_FORMAT} is kept ({exc})", err=True)
+                            continue
+                        log(f"    ~ {label} [{fmt}]: export failed, keeping the stored .{STORED_FORMAT} instead ({exc})", err=True)
+                        href, key, dest = storage_href, STORED_FORMAT, stored_dest
                 size = self.api.download_to(href, dest)
                 files[key] = str(dest.relative_to(self.cfg.root))
                 fetched.append(dest.name)
@@ -861,11 +874,12 @@ class Syncer:
                 record["export_failed"] = export_failed
             self.manifest["items"][item["id"]] = record
             self._write_design_info(item_dir, item["id"], ctx, record)
-            if fetched:
+            if fetched or failed_now:
                 event = {"event": "synced", "version_number": version_no, "version_id": version_id, "files": sorted(fetched)}
                 if export_failed:
                     event["export_failed"] = sorted(export_failed)
                 self._append_history(item_dir, event)
+            self.save_manifest()  # per item, so a run that is stopped keeps what it fetched
 
 
 # --------------------------------------------------------------------------- #

@@ -104,19 +104,55 @@ class SyncEngineTests(unittest.TestCase):
     def history(self, item_dir):
         return [json.loads(line) for line in (item_dir / "history.jsonl").read_text().splitlines()]
 
-    def failing_export(self):
-        """The cloud lists the design but cannot build its export; the stored file is still there."""
+    def stored_design(self):
+        """What the real cloud does: it holds the design's own file and offers the archive as an export."""
         api = self.api
         tip = api._design
         def design():
             d = tip()
             d["_tip"]["relationships"] = {"storage": {"data": {"id": "urn:adsk.objects:os.object:wip.dm.prod/stored.f3d"}}}
             return d
+        api._design = design
+        api.download_formats = lambda project_id, version_id: ["f3z"]
+
+    def failing_export(self):
+        """The cloud lists the design but cannot build its export; the stored file is still there."""
+        self.stored_design()
+        api = self.api
         def export(project_id, version_id, file_type):
             api.export_calls.append((version_id, file_type))
             raise RuntimeError("Export job failed")
-        api._design, api.export_version = design, export
-        api.download_formats = lambda project_id, version_id: ["f3z"]   # what the real cloud offers
+        api.export_version = export
+
+    def test_native_keeps_the_stored_file_and_the_archive(self):
+        self.stored_design()
+        stats = self.run_sync()
+        self.assertEqual((stats.downloaded, stats.failed), (3, 0))   # .f3d, .f3z, and the uploaded pdf
+        stored = self.design / "wip" / "Bench Vise.f3d"
+        self.assertEqual(stored.read_bytes(), b"bytes-of:urn:adsk.objects:os.object:wip.dm.prod/stored.f3d")
+        self.assertEqual((self.design / "wip" / "Bench Vise.f3z").read_bytes(), b"bytes-of:https://signed.example/3.f3z")
+        self.assertEqual(self.api.export_calls, [(self.api.design_version, "f3z")])   # the .f3d needs no export
+        self.assertEqual(self.history(self.design)[-1]["files"], ["Bench Vise.f3d", "Bench Vise.f3z"])
+        self.assertEqual(self.run_sync().downloaded, 0)
+
+    def test_store_holding_only_the_archive_gains_the_stored_file(self):
+        self.stored_design()
+        self.run_sync(formats=("f3z",))
+        self.assertFalse((self.design / "wip" / "Bench Vise.f3d").exists())
+        stats = self.run_sync()
+        self.assertEqual(stats.downloaded, 1)
+        self.assertTrue((self.design / "wip" / "Bench Vise.f3d").exists())
+        self.assertEqual(len(self.api.export_calls), 1)              # the archive is not exported again
+        record = json.loads((self.root / ".fusion-sync" / "manifest.json").read_text())["items"]["item_design"]
+        self.assertEqual(sorted(record["files"]), ["f3d", "f3z"])
+
+    def test_failed_export_of_the_archive_alone_falls_back_to_the_stored_file(self):
+        self.failing_export()
+        stats = self.run_sync(formats=("f3z",))
+        self.assertEqual(stats.failed, 0)
+        self.assertTrue((self.design / "wip" / "Bench Vise.f3d").exists())
+        record = json.loads((self.root / ".fusion-sync" / "manifest.json").read_text())["items"]["item_design"]
+        self.assertEqual(record["export_failed"], {"f3z": self.api.design_version})
 
     def test_failed_export_keeps_the_stored_file(self):
         self.failing_export()
@@ -142,6 +178,21 @@ class SyncEngineTests(unittest.TestCase):
         self.run_sync()
         self.assertEqual(len(self.api.export_calls), calls + 1)  # new version: tried again
         self.assertTrue((self.design / "wip" / "_versions" / "Bench Vise.v3.f3d").exists())
+
+    def test_http_error_during_export_is_retried_on_the_next_run(self):
+        self.stored_design()
+        export = self.api.export_version
+        def unavailable(project_id, version_id, file_type):
+            raise fs.ApiError(503, "unavailable", "https://example/export")
+        self.api.export_version = unavailable
+        stats = self.run_sync()
+        self.assertEqual(stats.failed, 1)
+        record = json.loads((self.root / ".fusion-sync" / "manifest.json").read_text())["items"]["item_design"]
+        self.assertNotIn("export_failed", record)
+        self.assertEqual(sorted(record["files"]), ["f3d"])           # the stored file still came down
+        self.api.export_version = export
+        self.run_sync()
+        self.assertTrue((self.design / "wip" / "Bench Vise.f3z").exists())
 
     def test_failed_export_without_a_stored_file_is_a_failure(self):
         def export(project_id, version_id, file_type):
@@ -209,6 +260,22 @@ class SyncEngineTests(unittest.TestCase):
         self.assertEqual(stats.skipped, 2)
         self.assertEqual(len(self.api.export_calls), 1)
         self.assertEqual(len(self.history(self.design)), 1)
+
+    def test_stopped_run_keeps_what_it_fetched(self):
+        download = self.api.download_to
+        def stop_at_the_pdf(href, dest):
+            if dest.name == "vendor.pdf":
+                raise KeyboardInterrupt
+            return download(href, dest)
+        self.api.download_to = stop_at_the_pdf
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_sync()
+        manifest = json.loads((self.root / ".fusion-sync" / "manifest.json").read_text())
+        self.assertIn("item_design", manifest["items"])
+        self.api.download_to = download
+        stats = self.run_sync()
+        self.assertEqual(stats.downloaded, 1)   # only the file the first run never got
+        self.assertEqual(len(self.api.export_calls), 1)
 
     def test_new_version_reexports_and_archives_old(self):
         self.run_sync()
@@ -341,7 +408,11 @@ class HelperTests(unittest.TestCase):
             self.assertEqual(fs.safe_name(ordinary), ordinary)
 
     def test_choose_formats(self):
-        self.assertEqual(fs.choose_formats(["native"], ["f3d", "f3z", "step"], "design"), ["f3z"])
+        self.assertEqual(fs.choose_formats(["native"], ["f3d", "f3z", "step"], "design"), ["f3d", "f3z"])
+        self.assertEqual(fs.choose_formats(["native"], ["f3z"], "design"), ["f3z"])
+        self.assertEqual(fs.choose_formats(["native"], ["f3z"], "design", stored=True), ["f3d", "f3z"])
+        self.assertEqual(fs.choose_formats(["f3d"], ["f3z"], "design", stored=True), ["f3d"])
+        self.assertEqual(fs.choose_formats(["native"], ["pdf"], "drawing", stored=True), ["pdf"])
         self.assertEqual(fs.choose_formats(["native"], ["f3d", "step"], "design"), ["f3d"])
         self.assertEqual(fs.choose_formats(["native"], [], "design"), ["f3d"])
         self.assertEqual(fs.choose_formats(["native", "step", "step"], ["f3d", "step"], "design"), ["f3d", "step"])
@@ -366,6 +437,8 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(out, "https://s3.example/signed")
         self.assertIn("/oss/v2/buckets/wip.dm.prod/objects/abc.f3d/signeds3download", seen["url"])
         self.assertEqual(api.resolve_storage("https://already.signed/x"), "https://already.signed/x")
+        api.resolve_storage("https://developer.api.autodesk.com/oss/v2/buckets/wip.dm.prod/objects/abc.f3d?scopes=global")
+        self.assertTrue(seen["url"].endswith("/oss/v2/buckets/wip.dm.prod/objects/abc.f3d/signeds3download"))
 
 
 if __name__ == "__main__":

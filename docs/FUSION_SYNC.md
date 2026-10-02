@@ -21,6 +21,7 @@ goes in its `wip/` subfolder.
         history.jsonl            <- one line per sync, move, or cloud delete
         wip/
           Headset Spacers.f3d
+          Headset Spacers.f3z
           Headset Spacers.step
           _versions/             <- prior copies, kept when a design changes
         released/                <- not sync's; never touched
@@ -84,17 +85,25 @@ Config lives in `~/.config/fusion-sync/config.json`, tokens in
 ./fusion_sync.py status
 ```
 
-`native` means the Fusion archive: `.f3z` when a design references external
-components, otherwise `.f3d`. Drawings export as PDF. Other formats accepted by the
+`native` keeps a design in both of Fusion's own formats, fetched one after
+the other before the sync moves to the next design:
+
+- the `.f3d`, the design file as the cloud stores it. It downloads as it is,
+  with no export job, so it takes seconds.
+- the `.f3z`, an archive the cloud builds on request. It also carries copies
+  of the other designs an assembly references. Building it takes longer.
+
+Drawings export as PDF. Other formats accepted by the
 cloud exporter: `step`, `iges`, `sat`, `smt`, `stl`, `obj`, `fbx`, `dwg`, `dxf`, `pdf`.
 Formats the cloud cannot produce for a given item are skipped with a note.
 
 Sometimes the cloud lists a design's archive as available and then fails to
-build it. The sync then keeps the design file as the cloud stores it, a
-`.f3d`, in place of the archive, and records the failed export in the
-design's `history.jsonl`. It does not ask again for that version; a new
-version in the cloud gets a fresh try. A stored `.f3d` does not carry copies
-of the other designs an assembly references.
+build it. The design then has its `.f3d` alone, and the sync records the
+failed export in the design's `history.jsonl`. It does not ask again for
+that version; a new version in the cloud gets a fresh try. A `.f3d` does not
+carry copies of the other designs an assembly references. An export that
+fails on a network or service error is not recorded this way, and the next
+run tries it again.
 
 ## Run it in the background
 

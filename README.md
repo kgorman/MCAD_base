@@ -306,8 +306,9 @@ appear in the tree.
 - Identity is the Fusion item id in `design.json`, not the path. A rename
   or move in the cloud moves the folder, with its releases and builds.
 - A delete in the cloud marks the folder and removes nothing.
-- An assembly that links to other designs is exported as one `.f3z`
-  archive.
+- Each design is kept in both of Fusion's formats: the `.f3d` as the cloud
+  stores it, and a `.f3z` archive, which also carries the other designs an
+  assembly links to.
 
 Setup, formats, and scheduling are in
 [docs/FUSION_SYNC.md](docs/FUSION_SYNC.md). The sync has been tested

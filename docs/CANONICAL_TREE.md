@@ -86,7 +86,8 @@ subfolders of the design, not separate trees.
           DELETED_IN_CLOUD                  <- marker, only if the design is gone from the cloud
 
           wip/                              <- WORK IN PROGRESS. The working folder for every design.
-            <design>.f3d                    <- synced designs: native archive, latest cloud version; sync replaces it
+            <design>.f3d                    <- synced designs: native file, latest cloud version; sync replaces it
+            <design>.f3z                    <- the same version as an archive, with the designs it references
             <design>.step
             _versions/                      <- prior copies when the cloud version changed
               <design>.v13.f3d
@@ -139,7 +140,7 @@ subfolders of the design, not separate trees.
     haas-vf2/                               <- flat, safe names; copies from released/, never edited
 ```
 
-The `.f3d` names and the `.fusion-sync/` folder are what a Fusion sync
+The `.f3d` and `.f3z` names and the `.fusion-sync/` folder are what a Fusion sync
 leaves. A design made by hand has whatever its CAD system saves.
 
 Two things particular to a Fusion sync:
