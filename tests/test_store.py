@@ -45,7 +45,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(mt.check_tree(self.root), ([], []))
         self.assertEqual(len(list(mt.find_designs(self.root))), 2)
 
-        design = self.root / "Kevin's Hub" / "Shop_Projects" / "Bench Vise"
+        design = self.root / "Kenny's Hub" / "Shop_Projects" / "Bench Vise"
         info = json.loads((design / "design.json").read_text())
         info["part_number"] = "bv-0001"
         (design / "design.json").write_text(json.dumps(info))
@@ -53,7 +53,7 @@ class StoreTest(unittest.TestCase):
         with (self.root / "_index" / "parts.csv").open() as fh:
             rows = list(csv.DictReader(fh))
         self.assertEqual(rows[0]["part_number"], "bv-0001")
-        self.assertEqual(rows[0]["path"], "Kevin's Hub/Shop_Projects/Bench Vise")
+        self.assertEqual(rows[0]["path"], "Kenny's Hub/Shop_Projects/Bench Vise")
         self.assertEqual(rows[0]["wip_version"], "3")
 
         self.sync()  # the index and docs at the root do not confuse the next sync
@@ -61,7 +61,7 @@ class StoreTest(unittest.TestCase):
 
     def test_sync_leaves_a_persons_files_in_wip_alone(self):
         self.sync()
-        wip = self.root / "Kevin's Hub" / "Shop_Projects" / "Bench Vise" / "wip"
+        wip = self.root / "Kenny's Hub" / "Shop_Projects" / "Bench Vise" / "wip"
         (wip / "jaw-insert_test.3mf").write_text("mine")
         (wip / "notes.txt").write_text("mine")
         self.api.design_version = "urn:v:design?version=4"
@@ -76,7 +76,7 @@ class StoreTest(unittest.TestCase):
         self.sync()
         problems, notes = mt.check_tree(self.root)
         self.assertEqual(problems, [])
-        self.assertEqual(notes, ["deleted in the cloud, kept here: Kevin's Hub/Shop_Projects/Bench Vise"])
+        self.assertEqual(notes, ["deleted in the cloud, kept here: Kenny's Hub/Shop_Projects/Bench Vise"])
         mt.build_index(self.root, out=quiet)
         with (self.root / "_index" / "parts.csv").open() as fh:
             flagged = [r["name"] for r in csv.DictReader(fh) if r["deleted_in_cloud"]]

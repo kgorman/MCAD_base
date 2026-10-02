@@ -14,7 +14,7 @@ goes in its `wip/` subfolder.
 
 ```
 /Volumes/MCAD/MCAD_base/
-  Kevin's Hub/
+  Kenny's Hub/
     Bike/
       Headset Spacers/
         design.json              <- Fusion item id, part number, current wip version

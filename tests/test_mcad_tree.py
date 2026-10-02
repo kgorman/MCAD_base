@@ -25,12 +25,12 @@ class McadTreeTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def make_design(self, rel="Kevin's Hub/Bike/Headset Spacers", item_id="item_1", **info):
+    def make_design(self, rel="Kenny's Hub/Bike/Headset Spacers", item_id="item_1", **info):
         design = self.root / rel
         (design / "wip").mkdir(parents=True)
         (design / "wip" / f"{design.name}.f3d").write_text("f3d")
         data = {"schema": 2, "fusion_item_id": item_id, "name": design.name, "kind": "design",
-                "hub": "Kevin's Hub", "project": "Bike", "part_number": None,
+                "hub": "Kenny's Hub", "project": "Bike", "part_number": None,
                 "wip": {"version_number": 3}}
         data.update(info)
         (design / "design.json").write_text(json.dumps(data))
@@ -117,7 +117,7 @@ class McadTreeTest(unittest.TestCase):
         self.make_revision(design)
         (design / "Photo of First Print.jpg").write_text("")   # cloud and human names are free
         self.make_build(design)
-        (self.root / "Kevin's Hub" / "Bike" / ".DS_Store").write_text("")
+        (self.root / "Kenny's Hub" / "Bike" / ".DS_Store").write_text("")
         self.assertEqual(mt.check_tree(self.root), ([], []))
 
     def test_check_flags_two_folders_claiming_one_fusion_item(self):

@@ -163,7 +163,7 @@ every sync.
   "fusion_item_id": "urn:adsk.wipprod:dm.lineage:...",
   "name": "Headset Spacers",
   "kind": "design",
-  "hub": "Kevin's Hub",
+  "hub": "Kenny's Hub",
   "project": "Bike",
   "part_number": null,
   "description": null,
@@ -211,7 +211,7 @@ Events written today: `synced`, `moved`, `deleted_in_cloud`,
     "review_record": "reviews/design-review.md"
   },
   "source": {
-    "hub": "Kevin's Hub",
+    "hub": "Kenny's Hub",
     "project": "Bike",
     "fusion_item_id": "urn:adsk.wipprod:dm.lineage:...",
     "fusion_version_id": "urn:adsk.wipprod:fs.file:vf....?version=14",

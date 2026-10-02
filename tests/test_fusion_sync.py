@@ -25,7 +25,7 @@ class FakeAps:
         self.files = {}  # href -> bytes
 
     def hubs(self):
-        return [{"id": "h1", "attributes": {"name": "Kevin's Hub"}}]
+        return [{"id": "h1", "attributes": {"name": "Kenny's Hub"}}]
 
     def projects(self, hub_id):
         return [{"id": "p1", "attributes": {"name": "Shop/Projects"}}]  # slash must be sanitized
@@ -89,7 +89,7 @@ class SyncEngineTests(unittest.TestCase):
         self.root = Path(self.tmp.name) / "store"
         self.cfg = fs.Config(client_id="x", root=self.root)
         self.api = FakeAps()
-        self.project = self.root / "Kevin's Hub" / "Shop_Projects"
+        self.project = self.root / "Kenny's Hub" / "Shop_Projects"
         self.design = self.project / "Bench Vise"
 
     def tearDown(self):
@@ -111,13 +111,13 @@ class SyncEngineTests(unittest.TestCase):
         self.assertEqual(self.api.export_calls, [("urn:v:design?version=3", "f3d")])
         manifest = json.loads((self.root / ".fusion-sync" / "manifest.json").read_text())
         self.assertEqual(manifest["items"]["item_design"]["version_number"], 3)
-        self.assertEqual(manifest["items"]["item_design"]["dir"], "Kevin's Hub/Shop_Projects/Bench Vise")
+        self.assertEqual(manifest["items"]["item_design"]["dir"], "Kenny's Hub/Shop_Projects/Bench Vise")
 
     def test_design_json_and_history(self):
         self.run_sync()
         info = json.loads((self.design / "design.json").read_text())
         self.assertEqual(info["fusion_item_id"], "item_design")
-        self.assertEqual(info["hub"], "Kevin's Hub")
+        self.assertEqual(info["hub"], "Kenny's Hub")
         self.assertEqual(info["project"], "Shop/Projects")  # the cloud's name, not the sanitized one
         self.assertIsNone(info["part_number"])
         self.assertEqual(info["wip"]["version_number"], 3)
