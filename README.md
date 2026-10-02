@@ -16,7 +16,12 @@ The tools do not set how a shop works. They check a store against the
 layout and report what is missing; nothing blocks a save or rewrites your
 files.
 
-Standard library Python only. Python 3.9+.
+Because the store is only files, the shop backs it up, copies it, or zips
+it with whatever it already uses, and controls access with the operating
+system's own users and permissions.
+
+The only dependency is Python 3.9 or newer. See
+[Requirements](#requirements).
 
 ## Quick start
 
@@ -28,7 +33,54 @@ mkdir -p "/path/to/store/Brackets/Motor Mount/wip"    # a design is just a folde
 ./mcad_tree.py check /path/to/store
 ```
 
-Then save your CAD files into `wip/` and carry on working.
+Then save your CAD files into `wip/` and carry on working. On Windows the
+commands differ slightly; see [Windows](#windows).
+
+## Requirements
+
+- **Python 3.9 or newer.** The tools use only the standard library, so
+  there are no packages to install, no database, and no server.
+- **macOS, Linux, or Windows.**
+- **A folder for the store:** a local disk, a NAS share, or any shared
+  drive the operating system can mount.
+- **For the Fusion sync only:** an Autodesk account, internet access, and a
+  web browser to sign in.
+
+Getting Python:
+
+- macOS: `xcode-select --install` installs Apple's command line tools,
+  which include `python3`.
+- Linux: most distributions ship `python3`; otherwise install it with the
+  package manager.
+- Windows: install it from [python.org](https://www.python.org/downloads/)
+  or the Microsoft Store.
+
+Development and testing so far have been on macOS. Linux uses the same
+commands.
+
+### Windows
+
+```bat
+git clone https://github.com/kgorman/MCAD_base.git
+cd MCAD_base
+py mcad_tree.py init D:\store
+mkdir "D:\store\Brackets\Motor Mount\wip"
+py mcad_tree.py check D:\store
+```
+
+- Run each tool with `py` in front instead of `./`. `py` is the launcher
+  that comes with Python from python.org; with the Microsoft Store version
+  use `python`.
+- The store can be on a local drive or a mapped network drive.
+- Run the tests the same way: `py tests\test_mcad_tree.py`.
+- The Fusion sync's background schedule (`install-launchd`) is for macOS.
+  On Windows, run `py fusion_sync.py sync` from Task Scheduler.
+
+The tools have not been run on Windows yet. Known gaps are tracked in
+[#8](https://github.com/kgorman/MCAD_base/issues/8) (the index writes
+backslash paths) and
+[#9](https://github.com/kgorman/MCAD_base/issues/9) (long paths, reserved
+names, and token storage in the sync).
 
 ## The store
 
@@ -110,6 +162,31 @@ Add a `design.json` to give the design a part number and a description.
 `verify` does all of that and re-hashes every released file against its
 `SHA256SUMS`, which reads the whole store.
 
+## Backups
+
+The store is a folder of ordinary files, so back it up the way the shop
+backs up any files: NAS snapshots, `rsync`, Time Machine, a cloud backup
+service, or a zip of the whole tree. There is nothing to export or dump
+first.
+
+- A copy of the tree is a complete, working store. Point the tools at the
+  copy and they run.
+- One design folder can be copied or zipped on its own. Everything about
+  the design is inside it.
+- After a restore, `verify` re-hashes every released file against its
+  `SHA256SUMS` and reports any that did not come back intact.
+
+## Users and permissions
+
+MCAD_base has no accounts of its own. Its users are the users of the host
+operating system or the NAS, and the permissions model is the file
+system's: whoever can read a folder can read the design, and whoever can
+write to it can change it.
+
+Set access with the tools the shop already has: share permissions, groups,
+and read-only folders. A shop that wants released revisions locked makes
+`released/` read-only to everyone but the person who releases.
+
 ## ISO alignment
 
 The layout is aligned with three standards, so that working in it produces
@@ -183,7 +260,7 @@ python3 tests/test_fusion_sync.py
 python3 tests/test_store.py
 ```
 
-## Licence
+## License
 
 Apache-2.0, for everything in this repository: the layout, `mcad_tree.py`,
 and `fusion_sync.py`. See [LICENSE](LICENSE).

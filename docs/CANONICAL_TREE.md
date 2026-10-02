@@ -344,7 +344,7 @@ Written beside `build.json` whenever anything built was not accepted.
 
 `description`, `disposition`, and `decided_by` are required. `disposition`
 is `scrap`, `rework`, `use-as-is`, or `return`. For `use-as-is`,
-`concession` records who authorised accepting the parts as they are,
+`concession` records who authorized accepting the parts as they are,
 including the customer where the customer has to agree.
 
 ## What check and verify find
@@ -422,7 +422,7 @@ unless the manifest lists one.
 - ISO 9001 8.3.4 design controls and 8.3.6 design changes: `reviews/` in
   each revision holds the review, verification, and validation records;
   `CHANGELOG.md`, `reason`, and `manifest.approval` record what changed and
-  who authorised it.
+  who authorized it.
 - ISO 9001 8.5.1 controlled production and 8.5.6 production changes: the
   slicer project, settings, and program for each proven machine model are
   frozen in the revision; changing them is a new revision, and a new
