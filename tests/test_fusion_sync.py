@@ -104,6 +104,53 @@ class SyncEngineTests(unittest.TestCase):
     def history(self, item_dir):
         return [json.loads(line) for line in (item_dir / "history.jsonl").read_text().splitlines()]
 
+    def failing_export(self):
+        """The cloud lists the design but cannot build its export; the stored file is still there."""
+        api = self.api
+        tip = api._design
+        def design():
+            d = tip()
+            d["_tip"]["relationships"] = {"storage": {"data": {"id": "urn:adsk.objects:os.object:wip.dm.prod/stored.f3d"}}}
+            return d
+        def export(project_id, version_id, file_type):
+            api.export_calls.append((version_id, file_type))
+            raise RuntimeError("Export job failed")
+        api._design, api.export_version = design, export
+        api.download_formats = lambda project_id, version_id: ["f3z"]   # what the real cloud offers
+
+    def test_failed_export_keeps_the_stored_file(self):
+        self.failing_export()
+        stats = self.run_sync()
+        self.assertEqual(stats.failed, 0)
+        stored = self.design / "wip" / "Bench Vise.f3d"
+        self.assertEqual(stored.read_bytes(), b"bytes-of:urn:adsk.objects:os.object:wip.dm.prod/stored.f3d")
+        record = json.loads((self.root / ".fusion-sync" / "manifest.json").read_text())["items"]["item_design"]
+        self.assertEqual(record["export_failed"], {"f3z": self.api.design_version})
+        self.assertEqual(record["files"], {"f3d": "Kenny's Hub/Shop_Projects/Bench Vise/wip/Bench Vise.f3d"})
+        self.assertEqual(self.history(self.design)[-1]["export_failed"], ["f3z"])
+        self.assertFalse((self.design / "wip" / "Bench Vise.f3z").exists())
+        self.assertEqual(json.loads((self.design / "design.json").read_text())["wip"]["files"], ["Bench Vise.f3d"])
+
+    def test_failed_export_is_not_retried_until_a_new_version(self):
+        self.failing_export()
+        self.run_sync()
+        calls = len(self.api.export_calls)
+        stats = self.run_sync()
+        self.assertEqual(len(self.api.export_calls), calls)      # same version: left alone
+        self.assertEqual((stats.downloaded, stats.failed), (0, 0))
+        self.api.design_version = "urn:v:design?version=4"
+        self.run_sync()
+        self.assertEqual(len(self.api.export_calls), calls + 1)  # new version: tried again
+        self.assertTrue((self.design / "wip" / "_versions" / "Bench Vise.v3.f3d").exists())
+
+    def test_failed_export_without_a_stored_file_is_a_failure(self):
+        def export(project_id, version_id, file_type):
+            raise RuntimeError("Export job failed")
+        self.api.export_version = export
+        stats = self.run_sync()
+        self.assertEqual(stats.failed, 1)
+        self.assertFalse(self.design.exists())
+
     def test_first_run_builds_one_folder_per_item(self):
         stats = self.run_sync()
         # the project's single root folder is flattened away

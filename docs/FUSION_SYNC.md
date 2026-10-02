@@ -89,6 +89,13 @@ components, otherwise `.f3d`. Drawings export as PDF. Other formats accepted by 
 cloud exporter: `step`, `iges`, `sat`, `smt`, `stl`, `obj`, `fbx`, `dwg`, `dxf`, `pdf`.
 Formats the cloud cannot produce for a given item are skipped with a note.
 
+Sometimes the cloud lists a design's archive as available and then fails to
+build it. The sync then keeps the design file as the cloud stores it, a
+`.f3d`, in place of the archive, and records the failed export in the
+design's `history.jsonl`. It does not ask again for that version; a new
+version in the cloud gets a fresh try. A stored `.f3d` does not carry copies
+of the other designs an assembly references.
+
 ## Run it in the background
 
 ```sh

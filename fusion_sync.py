@@ -96,6 +96,9 @@ NATIVE_PREFERENCE = {
     "other": [],
 }
 
+# What a Fusion design is stored as in the cloud. Kept in place of an export the cloud fails to build.
+STORED_FORMAT = "f3d"
+
 JOB_POLL_SECONDS = 3
 JOB_TIMEOUT_SECONDS = 15 * 60
 
@@ -785,8 +788,14 @@ class Syncer:
         if moved and self.dry_run and up_to_date:
             self.stats.skipped += 1
             return
+        # A format the cloud failed to export for this version is not asked for again while the
+        # stored copy kept in its place is still there. A new cloud version gets a fresh try.
+        export_failed = dict(record.get("export_failed", {})) if up_to_date else {}
+        stored = record.get("files", {}).get(STORED_FORMAT)
+        have_stored = bool(stored) and (self.cfg.root / stored).is_file()
         todo = {fmt: p for fmt, p in wanted.items()
-                if not (up_to_date and p.exists() and record.get("files", {}).get(fmt) == str(p.relative_to(self.cfg.root)))}
+                if not (up_to_date and p.exists() and record.get("files", {}).get(fmt) == str(p.relative_to(self.cfg.root)))
+                and not (fmt in export_failed and have_stored)}
 
         if not todo:
             self.stats.skipped += 1
@@ -810,13 +819,23 @@ class Syncer:
         fetched: List[str] = []
         for fmt, dest in todo.items():
             try:
+                key = fmt
                 if fmt == "raw":
                     href = storage_href
                 else:
-                    href = self.api.existing_downloads(project_id, version_id, fmt) or \
-                        self.api.export_version(project_id, version_id, fmt)
+                    try:
+                        href = self.api.existing_downloads(project_id, version_id, fmt) or \
+                            self.api.export_version(project_id, version_id, fmt)
+                    except RuntimeError as exc:
+                        if not (kind == "design" and fmt in NATIVE_PREFERENCE["design"] and storage_href):
+                            raise
+                        # The cloud could not build the archive. Keep the design file as the cloud
+                        # stores it, which is better than keeping nothing.
+                        log(f"    ~ {label} [{fmt}]: export failed, keeping the stored .{STORED_FORMAT} instead ({exc})", err=True)
+                        href, key, dest = storage_href, STORED_FORMAT, item_dir / WIP_DIRNAME / f"{stem}.{STORED_FORMAT}"
+                        export_failed[fmt] = version_id
                 size = self.api.download_to(href, dest)
-                files[fmt] = str(dest.relative_to(self.cfg.root))
+                files[key] = str(dest.relative_to(self.cfg.root))
                 fetched.append(dest.name)
                 self.stats.downloaded += 1
                 self.stats.bytes += size
@@ -838,11 +857,15 @@ class Syncer:
                 "files": files,
                 "synced_at": now_stamp(),
             }
+            if export_failed:
+                record["export_failed"] = export_failed
             self.manifest["items"][item["id"]] = record
             self._write_design_info(item_dir, item["id"], ctx, record)
             if fetched:
-                self._append_history(item_dir, {"event": "synced", "version_number": version_no,
-                                                "version_id": version_id, "files": sorted(fetched)})
+                event = {"event": "synced", "version_number": version_no, "version_id": version_id, "files": sorted(fetched)}
+                if export_failed:
+                    event["export_failed"] = sorted(export_failed)
+                self._append_history(item_dir, event)
 
 
 # --------------------------------------------------------------------------- #
