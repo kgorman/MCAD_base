@@ -113,6 +113,11 @@ python3 tests/test_fusion_sync.py
 python3 tests/test_store.py
 ```
 
+## Licence
+
+Apache-2.0, for everything in this repository: the layout, `mcad_tree.py`,
+and `fusion_sync.py`. See [LICENSE](LICENSE).
+
 ## Not built yet
 
 - Release: build `released/<rev>/` from a named Fusion version, collect the
