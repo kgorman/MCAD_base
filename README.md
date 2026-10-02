@@ -1,92 +1,97 @@
 # MCAD_base
 
-Working name. Product data management (PDM) for mechanical CAD, kept in
-plain folders on a NAS. The file system is the database: every record is a
-plain file in the tree, with no server and no separate database, so the
+Product data management (PDM) for mechanical CAD, kept in plain folders on
+a NAS or any shared drive. The file system is the database: every record is
+a plain file in the tree, with no server and no separate database, so the
 store stays readable without these tools.
 
-The layout is meant to survive an audit: a file store shaped like the
-Fusion cloud, where every design has one folder holding its working files,
-its frozen released revisions, and the record of what was built from them.
+Every design has one folder holding its working files, its frozen released
+revisions, and the record of what was built from them. The layout works
+with any CAD or CAM system, for printed and machined parts.
+
+It is built to help a shop meet ISO 9001: the records an auditor asks for
+are files in the design's own folder. See [ISO alignment](#iso-alignment).
+
+The tools do not set how a shop works. They check a store against the
+layout and report what is missing; nothing blocks a save or rewrites your
+files.
 
 Standard library Python only. Python 3.9+.
 
-## What's here
+## Quick start
 
-| File | What it does |
-|---|---|
-| `mcad_tree.py` | Marks a folder as a store, checks it against the schema, writes the part-number index. |
-| `fusion_sync.py` | Mirrors Fusion cloud hubs into the store, one way, incrementally. Creates the hub, project, and design folders. See [docs/FUSION_SYNC.md](docs/FUSION_SYNC.md). |
-| `docs/CANONICAL_TREE.md` | The layout, its rules, the file formats, and the ISO mapping. Copied into the store as `SCHEMA.md`. |
-| `tests/` | Offline tests for both tools and for the two working together. |
+```sh
+git clone https://github.com/kgorman/MCAD_base.git
+cd MCAD_base
+./mcad_tree.py init /path/to/store                    # the folder must already exist
+mkdir -p "/path/to/store/Brackets/Motor Mount/wip"    # a design is just a folder
+./mcad_tree.py check /path/to/store
+```
+
+Then save your CAD files into `wip/` and carry on working.
 
 ## The store
 
 ```
 <root>/
-  <hub>/<project>/<folder>/.../<design>/
-    design.json       Fusion item id, part number
-    history.jsonl     ledger: synced, moved, released, built
-    wip/              work in progress: the working folder, plus the latest cloud export for a synced design
-    released/         rev-a/, rev-b/, CURRENT; release tool only, frozen
+  <any folders>/.../<design>/
+    wip/              work in progress: where you work
+    released/         rev-a/, rev-b/, CURRENT; frozen once signed off
     builds/           what actually ran
+    design.json       optional: part number, description
+    history.jsonl     ledger: released, built, synced, moved
     (anything else)   yours
   _index/parts.csv    generated: part number -> folder
   _outbox/<machine>/  flat copies for machines, only if needed
 ```
 
-The tree follows Fusion, so a design is on disk where it is in the data
-panel. Identity is the Fusion item id in `design.json`, not the path: a
-rename or move in the cloud moves the folder, and a delete in the cloud
-marks the folder and removes nothing.
+A folder is a design as soon as it holds `wip/`, `released/`, or `builds/`.
+Arrange the folders above a design however the shop likes: by customer, by
+project, by product.
 
-Backup and release are different things and both live in the design's
-folder. `wip/` changes whenever the design does. A revision under
-`released/` never changes after it is signed off.
+Working files and releases are different things and both live in the
+design's folder. `wip/` changes whenever the design does. A revision under
+`released/` never changes after it is signed off. Machine files (G-code, NC
+programs) are kept inside the revision, one folder per machine model.
+
+The full layout, its rules, the file formats, and the ISO mapping are in
+[docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md).
 
 ## Set up a store
 
 ```sh
-./mcad_tree.py init /Volumes/MCAD/MCAD_base --dry-run   # show what would be created
-./mcad_tree.py init /Volumes/MCAD/MCAD_base             # create it
+./mcad_tree.py init /path/to/store --dry-run   # show what would be created
+./mcad_tree.py init /path/to/store             # create it
 ```
 
 `init` writes `README.md`, `SCHEMA.md`, and a schema version marker. It
-creates no folders; the sync tool builds the tree from the cloud.
+creates no design folders; you make those, or a sync tool does.
 
 - It never overwrites, moves, or deletes. `--update-docs` rewrites the two
   docs when the store's copies are out of date.
 - It refuses to run if the root folder does not exist, so an unmounted share
   does not get a store built on the local disk in its place.
 
-## Without Fusion
+## Start a design
 
-Make a folder for a design anywhere below the store root, make `wip/`
-inside it, and work there. No command is needed; `check`, `verify`, and
-`index` pick the folder up.
+Make a folder for the design anywhere below the store root, make `wip/`
+inside it, and work there with whatever CAD system the shop uses. No
+command is needed; `check`, `verify`, and `index` pick the folder up.
 
-## Fill it from Fusion
-
-```sh
-./fusion_sync.py init --client-id <APS_CLIENT_ID> --root /Volumes/MCAD/MCAD_base
-./fusion_sync.py auth
-./fusion_sync.py sync --dry-run
-./fusion_sync.py sync --formats native,step
-```
+Add a `design.json` to give the design a part number and a description.
 
 ## Check and index
 
 ```sh
-./mcad_tree.py check /Volumes/MCAD/MCAD_base   # find gaps; non-zero exit on problems
-./mcad_tree.py verify /Volumes/MCAD/MCAD_base  # check, plus re-hash every released file
-./mcad_tree.py index /Volumes/MCAD/MCAD_base   # writes _index/parts.csv
-./mcad_tree.py add-machine /Volumes/MCAD/MCAD_base haas-vf2
+./mcad_tree.py check /path/to/store    # find gaps; non-zero exit on problems
+./mcad_tree.py verify /path/to/store   # check, plus re-hash every released file
+./mcad_tree.py index /path/to/store    # writes _index/parts.csv
+./mcad_tree.py add-machine /path/to/store haas-vf2
 ```
 
 `check` finds gaps without hashing anything, so it is quick:
 
-- two folders claiming the same Fusion item, or a `CURRENT` that names no
-  revision;
+- a `CURRENT` that names no revision;
 - a revision without `manifest.json`, `SHA256SUMS`, CAD, a reviewer, or an
   approver;
 - a file the manifest or `SHA256SUMS` lists that is not there, or a file in
@@ -99,11 +104,76 @@ inside it, and work there. No command is needed; `check`, `verify`, and
   inspection record;
 - names inside `released/` that break the naming rule (lowercase ASCII,
   digits, `-`, `_`, `.`, path under 200 characters). Names above the
-  revision folder come from Fusion and are not policed.
+  revision folder are the shop's own and are not policed;
+- two folders claiming the same Fusion item (synced designs only).
 
 `verify` does all of that and re-hashes every released file against its
-`SHA256SUMS`, which reads the whole store. The full list is in
-[docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md).
+`SHA256SUMS`, which reads the whole store.
+
+## ISO alignment
+
+The layout is aligned with three standards, so that working in it produces
+the records a quality system needs:
+
+- **ISO 9001, quality management.** Every revision is identified and names
+  who reviewed and approved it. Released revisions are frozen and
+  checksummed, so they are protected from unintended change. A build
+  record ties a physical part to the revision and the exact file that made
+  it, and records the inspection, who accepted it, and what happened to
+  any rejected parts.
+- **ISO 10007, configuration management.** The design folder is the
+  configuration item, each released revision is a baseline, and
+  `history.jsonl` is the status accounting.
+- **ISO 19650, information management.** `wip/` is the standard's own name
+  for information still being authored. A released revision is the
+  published state, and obsolete revisions are the archive.
+
+The clause-by-clause mapping is in
+[docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#mapping-to-the-standards).
+`check` and `verify` report where a store falls short of it.
+
+## CAD systems
+
+Any CAD or CAM system that saves files works today: save into `wip/`. A
+system with its own cloud or vault can also have a sync tool that fills the
+tree for you. Fusion is the first.
+
+### Autodesk Fusion
+
+`fusion_sync.py` mirrors Fusion cloud hubs into the store, one way and
+incrementally, so you keep designing in Fusion as before and the files
+appear in the tree.
+
+```sh
+./fusion_sync.py init --client-id <APS_CLIENT_ID> --root /path/to/store
+./fusion_sync.py auth
+./fusion_sync.py sync --dry-run
+./fusion_sync.py sync --formats native,step
+```
+
+- The folders follow Fusion: hub, project, folder, design. A design is on
+  disk where it is in the data panel.
+- Each design's latest cloud export is kept in its `wip/`. The sync
+  replaces only the files it wrote and leaves everything else there alone.
+- Identity is the Fusion item id in `design.json`, not the path. A rename
+  or move in the cloud moves the folder, with its releases and builds.
+- A delete in the cloud marks the folder and removes nothing.
+- An assembly that links to other designs is exported as one `.f3z`
+  archive.
+
+Setup, formats, and scheduling are in
+[docs/FUSION_SYNC.md](docs/FUSION_SYNC.md). The sync has been tested
+offline only; it has not yet run against a live Autodesk account.
+
+## What's here
+
+| File | What it does |
+|---|---|
+| `mcad_tree.py` | Marks a folder as a store, checks it against the layout, writes the part-number index. |
+| `fusion_sync.py` | Mirrors Fusion cloud hubs into the store. |
+| `docs/CANONICAL_TREE.md` | The layout, its rules, the file formats, and the ISO mapping. Copied into the store as `SCHEMA.md`. |
+| `docs/FUSION_SYNC.md` | Setting up and running the Fusion sync. |
+| `tests/` | Offline tests for both tools and for the two working together. |
 
 ## Tests
 
@@ -120,12 +190,14 @@ and `fusion_sync.py`. See [LICENSE](LICENSE).
 
 ## Not built yet
 
-- Release: build `released/<rev>/` from a named Fusion version, collect the
+- Release: build `released/<rev>/` from the working files, collect the
   reviewer, approver, and review records, write the manifest and
   `SHA256SUMS`, set `CURRENT`, mark the prior revision `OBSOLETE`, append
-  to `history.jsonl`, copy to `_outbox/` if a machine needs it.
+  to `history.jsonl`, copy to `_outbox/` if a machine needs it. Revisions
+  are assembled by hand until then.
 - Build logging: nothing writes `builds/` yet; `build.json` and
   `nonconformance.json` are filled in by hand.
 - Running `verify` on a schedule.
-- The Fusion add-in that provides the Release command.
-- A run of `fusion_sync.py` against a live Autodesk account.
+- Assemblies whose files sit in more than one design folder.
+- Fusion: a run of the sync against a live account, and an add-in that
+  provides a Release command.
