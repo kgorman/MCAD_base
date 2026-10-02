@@ -83,6 +83,7 @@ WIP_DIRNAME = "wip"
 DESIGN_FILE = "design.json"
 HISTORY_FILE = "history.jsonl"
 DELETED_MARKER = "DELETED_IN_CLOUD"
+STORE_MARKER = ".mcad-tree.json"  # written by mcad_tree.py init
 STORE_SCHEMA = 2
 
 # Preferred export formats per Fusion item kind when the user asks for "native".
@@ -126,6 +127,25 @@ def read_json(path: Path, default: Any = None) -> Any:
             return json.load(fh)
     except FileNotFoundError:
         return default
+
+
+class StoreError(RuntimeError):
+    pass
+
+
+def require_store(root: Path) -> None:
+    """Refuse to sync into anything but a store at the schema this tool writes."""
+    try:
+        marker = read_json(root / STORE_MARKER)
+    except (OSError, ValueError) as exc:
+        raise StoreError(f"{root / STORE_MARKER} is unreadable: {exc}")
+    if not isinstance(marker, dict):
+        # Also what an unmounted share looks like: without this check the sync
+        # would quietly build the tree on the local disk instead.
+        raise StoreError(f"{root} is not an MCAD_base store (no {STORE_MARKER}). Is the share mounted? "
+                         f"To set one up: mcad_tree.py init {root}")
+    if marker.get("schema") != STORE_SCHEMA:
+        raise StoreError(f"{root} is at schema {marker.get('schema')}; this tool writes schema {STORE_SCHEMA}.")
 
 
 def write_json(path: Path, data: Any, *, private: bool = False) -> None:
@@ -645,6 +665,7 @@ class Syncer:
     # -- traversal ------------------------------------------------------------ #
 
     def run(self) -> SyncStats:
+        require_store(self.cfg.root)
         log(f"Sync root: {self.cfg.root}   formats: {', '.join(self.formats)}   {'DRY RUN' if self.dry_run else ''}")
         for hub in self.api.hubs():
             hub_name = hub["attributes"]["name"]
@@ -988,7 +1009,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         args.func(args)
     except KeyboardInterrupt:
         sys.exit(130)
-    except ApiError as exc:
+    except (ApiError, StoreError) as exc:
         log(str(exc), err=True)
         sys.exit(2)
 

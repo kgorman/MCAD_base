@@ -38,6 +38,8 @@ class StoreTest(unittest.TestCase):
     def test_tools_agree_on_names(self):
         for name in ("DESIGN_FILE", "HISTORY_FILE", "WIP_DIRNAME", "DELETED_MARKER"):
             self.assertEqual(getattr(fs, name), getattr(mt, name), name)
+        self.assertEqual(fs.STORE_MARKER, mt.MARKER)
+        self.assertEqual(fs.STORE_SCHEMA, mt.SCHEMA_VERSION)
         self.assertEqual(fs.STORE_SCHEMA, mt.SCHEMA_VERSION)
 
     def test_synced_store_passes_check_and_indexes(self):

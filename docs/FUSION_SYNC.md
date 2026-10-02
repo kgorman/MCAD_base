@@ -57,7 +57,12 @@ errors. A partial pass cannot tell "deleted" from "not looked at".
    - Callback URL: `http://localhost:8912/callback`
    - APIs: **Data Management API** (the default set is fine).
    - Copy the **Client ID**.
-2. Configure and sign in:
+2. Set up the store, if it is not one already: `./mcad_tree.py init <root>`.
+   The sync writes only into a folder that `init` has marked as a store at
+   the schema version it targets. Otherwise it stops and writes nothing,
+   which also keeps it from building the tree on the local disk when the
+   share is not mounted.
+3. Configure and sign in:
 
 ```sh
 chmod +x fusion_sync.py

@@ -228,6 +228,9 @@ appear in the tree.
 ./fusion_sync.py sync --formats native,step
 ```
 
+- Set the store up with `mcad_tree.py init` first. The sync stops if the
+  folder is not a store, so it never builds the tree on the local disk
+  when a share is not mounted.
 - The folders follow Fusion: hub, project, folder, design. A design is on
   disk where it is in the data panel.
 - Each design's latest cloud export is kept in its `wip/`. The sync
@@ -241,6 +244,14 @@ appear in the tree.
 Setup, formats, and scheduling are in
 [docs/FUSION_SYNC.md](docs/FUSION_SYNC.md). The sync has been tested
 offline only; it has not yet run against a live Autodesk account.
+
+## Compatible products
+
+A product that reads or writes a store can call itself "MCAD_base 2
+compatible" when what it writes passes `check`, it writes only where its
+kind of tool may write, and everything it writes stays readable with the
+tools in this repository alone. The definition is in
+[docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#mcad_base-compatible).
 
 ## What's here
 

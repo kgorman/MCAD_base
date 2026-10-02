@@ -87,6 +87,9 @@ class SyncEngineTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / "store"
+        self.root.mkdir()
+        self.marker = self.root / fs.STORE_MARKER   # what mcad_tree.py init leaves behind
+        self.marker.write_text(json.dumps({"schema": fs.STORE_SCHEMA}))
         self.cfg = fs.Config(client_id="x", root=self.root)
         self.api = FakeAps()
         self.project = self.root / "Kenny's Hub" / "Shop_Projects"
@@ -179,7 +182,30 @@ class SyncEngineTests(unittest.TestCase):
     def test_dry_run_writes_nothing(self):
         stats = self.run_sync(dry_run=True)
         self.assertEqual(stats.downloaded, 0)
-        self.assertFalse(self.root.exists())
+        self.assertEqual(os.listdir(self.root), [fs.STORE_MARKER])
+        self.assertEqual(self.api.export_calls, [])
+
+    def test_refuses_a_folder_that_is_not_a_store(self):
+        self.marker.unlink()
+        with self.assertRaises(fs.StoreError) as ctx:
+            self.run_sync()
+        self.assertIn("is not an MCAD_base store", str(ctx.exception))
+        self.assertEqual(os.listdir(self.root), [])
+        self.assertEqual(self.api.export_calls, [])
+
+    def test_refuses_a_root_that_does_not_exist(self):
+        # An unmounted share: the sync must not build the tree on the local disk.
+        missing = Path(self.tmp.name) / "not-mounted"
+        with self.assertRaises(fs.StoreError):
+            fs.Syncer(fs.Config(client_id="x", root=missing), self.api, formats=["native"]).run()
+        self.assertFalse(missing.exists())
+
+    def test_refuses_a_store_at_another_schema(self):
+        self.marker.write_text(json.dumps({"schema": fs.STORE_SCHEMA + 1}))
+        with self.assertRaises(fs.StoreError) as ctx:
+            self.run_sync()
+        self.assertIn(f"schema {fs.STORE_SCHEMA + 1}", str(ctx.exception))
+        self.assertEqual(os.listdir(self.root), [fs.STORE_MARKER])
         self.assertEqual(self.api.export_calls, [])
 
     def test_cloud_rename_moves_the_folder_without_reexport(self):

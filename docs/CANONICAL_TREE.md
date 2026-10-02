@@ -398,6 +398,44 @@ unless the manifest lists one.
 | `_index/` | mcad_tree index | regenerated | people, scripts |
 | `_outbox/<machine>/` | release tool copies from released | replaced on release | machines via SMB |
 
+## MCAD_base compatible
+
+A product that reads or writes a store can be described as "MCAD_base
+compatible" when all four of these hold.
+
+1. **What it writes passes `check`.** After the product has written to a
+   store, `check` reports no problem in anything it wrote, and `verify`
+   reports none in any revision it released.
+2. **It writes only where its kind of tool may write**, as set out in
+   "Who writes where" above:
+   - a sync tool writes its own exports in `wip/`, its own keys in
+     `design.json`, and events in `history.jsonl`;
+   - a release tool writes `released/`, `CURRENT`, events in
+     `history.jsonl`, and copies in `_outbox/`;
+   - farm or shop-floor software writes `builds/`;
+   - a tool that only reads writes nothing inside a design folder.
+
+   It leaves alone what it does not own: other files in `wip/`, keys it did
+   not write in a JSON file, frozen revisions, and anything else in the
+   design folder.
+3. **It names the schema version it targets, and writes to no other.**
+   The claim carries the number: "MCAD_base 2 compatible". The version is
+   the `schema` value in the store's `.mcad-tree.json`. Before writing, the
+   product reads that file and stops if it is missing or names another
+   version.
+4. **Everything it writes stays readable and verifiable with the open
+   tools alone.** Its records are plain files in the formats this document
+   defines. Nothing about a design exists only in the product's own
+   database, cloud, or file format. Take the product away and the store
+   still passes `check` and `verify`.
+
+A product may keep settings or working state of its own outside the design
+folders, as the Fusion sync does in `.fusion-sync/`. The store must be
+complete without it.
+
+Anyone can test the claim: point the product at a store, then run `check`
+and `verify`.
+
 ## Protection
 
 - Revision folders are set read-only after `SHA256SUMS` is written.
