@@ -120,15 +120,39 @@ class McadTreeTest(unittest.TestCase):
         (self.root / "Kevin's Hub" / "Bike" / ".DS_Store").write_text("")
         self.assertEqual(mt.check_tree(self.root), ([], []))
 
-    def test_check_flags_design_without_identity_and_duplicates(self):
+    def test_check_flags_two_folders_claiming_one_fusion_item(self):
         mt.init_tree(self.root, out=quiet)
         self.make_design("Hub/Bike/A", item_id="same")
         self.make_design("Hub/Bike/B", item_id="same")
-        self.make_design("Hub/Bike/C", item_id=None)
+        self.make_design("Hub/Bike/C", item_id=None)   # no Fusion id is fine: not every design is synced
+        problems, _ = mt.check_tree(self.root)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("same Fusion item", problems[0])
+
+    def test_a_design_made_by_hand_is_checked_and_indexed(self):
+        mt.init_tree(self.root, out=quiet)
+        design = self.root / "Brackets" / "Motor Mount"     # plain mkdir, no design.json, no Fusion
+        (design / "wip").mkdir(parents=True)
+        (design / "wip" / "motor-mount.sldprt").write_text("")
+        self.assertEqual([d.name for d in mt.find_designs(self.root)], ["Motor Mount"])
+        self.assertEqual(mt.check_tree(self.root), ([], []))
+
+        rev = self.make_revision(design)
+        (rev / "manifest.json").write_text("{}")             # released by hand, sign-offs forgotten
         problems, _ = mt.check_tree(self.root)
         self.assertEqual(len(problems), 2)
-        self.assertTrue(any("same Fusion item" in p for p in problems))
-        self.assertTrue(any("no fusion_item_id" in p for p in problems))
+        self.assertIn("approval.reviewed_by: Brackets/Motor Mount/released/rev-a", problems[0])
+
+        mt.build_index(self.root, out=quiet)
+        with (self.root / "_index" / "parts.csv").open() as fh:
+            rows = list(csv.DictReader(fh))
+        self.assertEqual([(r["name"], r["path"], r["current_revision"]) for r in rows],
+                         [("Motor Mount", "Brackets/Motor Mount", "rev-a")])
+
+    def test_a_cloud_folder_named_wip_is_not_a_design(self):
+        mt.init_tree(self.root, out=quiet)
+        self.make_design("Hub/Bike/wip/Stem Cap", item_id="a")   # Fusion folder that happens to be called wip
+        self.assertEqual([d.name for d in mt.find_designs(self.root)], ["Stem Cap"])
 
     def test_check_flags_bad_revisions(self):
         mt.init_tree(self.root, out=quiet)

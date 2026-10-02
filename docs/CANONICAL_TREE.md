@@ -1,8 +1,12 @@
 # MCAD_base store layout
 
-One root on the NAS, shaped like the Fusion cloud: hub, project, folder,
-then one folder per design. Everything about a design lands in that
-design's folder. Schema version 2.
+One root on the NAS and one folder per design. Everything about a design
+lands in that design's folder. For designs synced from Fusion the folders
+above are shaped like the Fusion cloud: hub, project, folder. Schema
+version 2.
+
+The layout does not set how a shop works. It says where things end up, and
+`check` reports where a store differs from it.
 
 The project, and inside it the design, is the container. State lives inside
 the container: work in progress, released revisions, and build records are
@@ -10,17 +14,22 @@ subfolders of the design, not separate trees.
 
 ## Rules
 
-1. **The tree follows Fusion.** Hub, project, and folder names are the
-   cloud's names. A design is found on disk where it is found in Fusion.
+1. **The tree follows Fusion, for designs that come from Fusion.** Hub,
+   project, and folder names are the cloud's names. A design is found on
+   disk where it is found in Fusion. A shop that does not use Fusion
+   arranges the folders above a design however it likes.
 2. **One folder per design.** The folder is the configuration item. Nothing
    about a design lives outside its folder.
 3. **Identity is the Fusion item id, not the path.** It is recorded in
    `design.json`. A rename or move in the cloud moves the folder; the id
    does not change. A part number is a field in `design.json`, added when
-   one exists.
+   one exists. A design made by hand has no Fusion id and is known by its
+   path.
 4. **Three reserved names, three writers.**
-   - `wip/` is written only by the sync tool. Mutable, overwritten whenever
-     the cloud changes.
+   - `wip/` is work in progress, and it is the working folder for every
+     design, whatever CAD system made it. For a design synced from Fusion
+     the sync tool also keeps the latest cloud export here. It replaces
+     only the files it wrote and leaves everything else in `wip/` alone.
    - `released/` is written only by the release tool. Append-only; a
      revision folder is never modified after its `SHA256SUMS` is written.
    - `builds/` holds records of what actually ran. Append-only.
@@ -32,8 +41,9 @@ subfolders of the design, not separate trees.
    decided what happened to them. One person may hold several of these
    roles; the name is still written down each time.
 6. **Sync never touches what it does not own.** Inside a design folder it
-   writes `wip/`, `design.json`, `history.jsonl`, and the
-   `DELETED_IN_CLOUD` marker. Nothing else, ever.
+   writes its own exports in `wip/`, plus `design.json`, `history.jsonl`,
+   and the `DELETED_IN_CLOUD` marker. Nothing else, ever, including other
+   files in `wip/`.
 7. **A revision folder is immutable.** New revision, new folder. Obsolete
    revisions stay; they get an `OBSOLETE` marker file, not a delete.
 8. **Nothing is deleted because the cloud deleted it.** The folder stays
@@ -70,8 +80,8 @@ subfolders of the design, not separate trees.
           history.jsonl                     <- ledger: synced, moved, released, built
           DELETED_IN_CLOUD                  <- marker, only if the design is gone from the cloud
 
-          wip/                              <- WORK IN PROGRESS. Sync tool only. Overwritten.
-            <design>.f3d                    <- native archive, latest cloud version
+          wip/                              <- WORK IN PROGRESS. The working folder for every design.
+            <design>.f3d                    <- synced designs: native archive, latest cloud version; sync replaces it
             <design>.step
             _versions/                      <- prior copies when the cloud version changed
               <design>.v13.f3d
@@ -131,6 +141,15 @@ the file, with the file in `wip/`.
 A Fusion project normally has a single root folder. It is flattened away so
 the disk path reads `<hub>/<project>/<design>/`, the same as the Fusion data
 panel. A project with several root folders keeps their names.
+
+## Starting a design by hand
+
+No tool is needed. Make a folder for the design anywhere below the store
+root, make `wip/` inside it, and work there with whatever CAD system the
+shop uses. The folder is a design as soon as it holds `wip/`, `released/`,
+or `builds/`, and `check`, `verify`, and `index` treat it like any other.
+`design.json` is optional for such a design; add one to give it a part
+number and description.
 
 ## design.json
 
@@ -369,7 +388,7 @@ unless the manifest lists one.
 
 | Area | Writer | Mutability | Reader |
 |---|---|---|---|
-| `<design>/wip/` | fusion_sync | overwritten | humans (browse), disaster recovery, release tool |
+| `<design>/wip/` | people; fusion_sync for its own exports | working files; sync replaces only the files it wrote | humans, disaster recovery, release tool |
 | `<design>/design.json` | fusion_sync (its keys); people (the rest) | updated | every tool |
 | `<design>/history.jsonl` | fusion_sync, release tool | append-only | auditors |
 | `<design>/released/<rev>/` | release tool | frozen after SHA256SUMS | everyone, auditors |
@@ -417,6 +436,7 @@ unless the manifest lists one.
   configuration item, `released/<rev>/` are its baselines, and
   `history.jsonl` is its status accounting.
 - ISO 19650 container states, borrowed from construction: `wip/` is work
-  in progress, `released/` with `CURRENT` is published, revisions marked
+  in progress (the standard's own name for information still being
+  authored), `released/` with `CURRENT` is published, revisions marked
   `OBSOLETE` are the archive.
 - Retention: `manifest.retention` per revision.

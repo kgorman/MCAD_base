@@ -59,6 +59,17 @@ class StoreTest(unittest.TestCase):
         self.sync()  # the index and docs at the root do not confuse the next sync
         self.assertEqual(mt.check_tree(self.root), ([], []))
 
+    def test_sync_leaves_a_persons_files_in_wip_alone(self):
+        self.sync()
+        wip = self.root / "Kevin's Hub" / "Shop_Projects" / "Bench Vise" / "wip"
+        (wip / "jaw-insert_test.3mf").write_text("mine")
+        (wip / "notes.txt").write_text("mine")
+        self.api.design_version = "urn:v:design?version=4"
+        self.sync()                                    # a new cloud version replaces only the export
+        self.assertEqual((wip / "jaw-insert_test.3mf").read_text(), "mine")
+        self.assertEqual((wip / "notes.txt").read_text(), "mine")
+        self.assertEqual(mt.check_tree(self.root), ([], []))
+
     def test_cloud_delete_shows_up_in_check_and_index(self):
         self.sync()
         self.api.design_present = False

@@ -2,15 +2,15 @@
 """
 mcad_tree.py - set up and check an MCAD_base file store.
 
-The store is rooted on the Fusion cloud's own structure: hub, project, folder,
-then one folder per design. Everything about a design lands in its folder:
+The store is one folder per design. For designs synced from Fusion, the folders
+above follow the cloud: hub, project, folder. A design can also be made by hand. Everything about a design lands in its folder:
 the latest cloud export in wip/, frozen revisions in released/, records of
 what actually ran in builds/, and any loose material beside them. The layout
 and its rules are in docs/CANONICAL_TREE.md, which is copied into the store as
 SCHEMA.md.
 
 `init` marks a folder as a store. fusion_sync.py creates the hubs, projects,
-and design folders. `check` finds what is missing or out of place, `verify`
+and design folders for Fusion; anyone can make a design folder by hand. `check` finds what is missing or out of place, `verify`
 also re-hashes every released file, and `index` writes a part-number lookup. All are safe to re-run; none overwrite or delete what
 they did not write.
 
@@ -51,6 +51,7 @@ HISTORY_FILE = "history.jsonl"
 WIP_DIRNAME = "wip"
 RELEASED_DIRNAME = "released"
 BUILDS_DIRNAME = "builds"
+RESERVED_DIRNAMES = (WIP_DIRNAME, RELEASED_DIRNAME, BUILDS_DIRNAME)
 CURRENT_FILE = "CURRENT"
 DELETED_MARKER = "DELETED_IN_CLOUD"
 MANIFEST_FILE = "manifest.json"
@@ -84,9 +85,9 @@ Inside a design folder:
 
 | Name | What it is | Who writes |
 |---|---|---|
-| `design.json` | identity: Fusion item id, part number, description | sync tool; you may add fields |
+| `design.json` | identity: Fusion item id, part number, description; optional for a design made by hand | sync tool; you may add fields |
 | `history.jsonl` | ledger: synced, released, built | tools, append-only |
-| `wip/` | latest export from the Fusion cloud, overwritten when the cloud changes | sync tool only |
+| `wip/` | work in progress: the files being worked on; for a design synced from Fusion, also the latest export from the cloud | you; the sync tool replaces only the files it wrote |
 | `released/` | frozen revisions, one folder per revision | release tool only |
 | `builds/` | records of what actually ran, who inspected and accepted it, and what was rejected | operators, farm software |
 | anything else | photos, loose STLs, notes | you |
@@ -94,7 +95,14 @@ Inside a design folder:
 Backup and release are different things. `wip/` changes whenever the design
 does. A revision under `released/` never changes after it is signed off.
 
-Do not save work into `wip/`. Do not edit anything under `released/`.
+Do not edit anything under `released/`.
+
+`wip/` is the working folder for every design, whatever made it. For a design
+synced from Fusion, the sync keeps the latest cloud export there and replaces
+only its own files; do not edit those, because the next sync overwrites them.
+
+To start a design without Fusion, make a folder for it anywhere under a
+project folder, make `wip/` inside it, and work there.
 
 This layout is maintained by `mcad_tree.py`. Run `mcad_tree.py check <this folder>`
 to see whether the store still follows the schema.
@@ -212,14 +220,22 @@ def init_tree(root: Path, dry_run: bool = False, update_docs: bool = False,
     return sc.changed
 
 
+def holds_designs(path: Path) -> bool:
+    return any(DESIGN_FILE in filenames for _, _, filenames in os.walk(path))
+
+
 def find_designs(root: Path) -> Iterator[Path]:
-    """Every folder holding a design.json. Design folders do not nest, so the walk stops there."""
+    """Every design folder: one the sync tool made (it holds design.json), or one made by hand (it
+    holds wip/, released/, or builds/). Design folders do not nest, so the walk stops there."""
     for dirpath, dirnames, filenames in os.walk(root):
-        if DESIGN_FILE in filenames:
+        at_root = Path(dirpath) == root
+        reserved = [d for d in dirnames if d in RESERVED_DIRNAMES]
+        # A cloud folder that happens to be called wip/ or builds/ holds designs; it is not one.
+        by_hand = not at_root and reserved and not any(holds_designs(Path(dirpath) / d) for d in reserved)
+        if DESIGN_FILE in filenames or by_hand:
             dirnames[:] = []
             yield Path(dirpath)
             continue
-        at_root = Path(dirpath) == root
         dirnames[:] = sorted(d for d in dirnames if not ignored(d) and not (at_root and d.startswith("_")))
 
 
@@ -502,9 +518,10 @@ def check_tree(root: Path, hashes: bool = False) -> Tuple[List[str], List[str]]:
         except TreeError as exc:
             problems.append(str(exc))
             continue
+        # Only a design synced from Fusion has an item id; one made by hand is known by its path.
         item_id = info.get("fusion_item_id")
         if not item_id:
-            problems.append(f"{DESIGN_FILE} has no fusion_item_id: {rel}")
+            pass
         elif item_id in seen:
             problems.append(f"two folders claim the same Fusion item: {seen[item_id]} and {rel}")
         else:

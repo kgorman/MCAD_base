@@ -23,7 +23,7 @@ Standard library Python only. Python 3.9+.
   <hub>/<project>/<folder>/.../<design>/
     design.json       Fusion item id, part number
     history.jsonl     ledger: synced, moved, released, built
-    wip/              latest cloud export; sync tool only, overwritten
+    wip/              work in progress: the working folder, plus the latest cloud export for a synced design
     released/         rev-a/, rev-b/, CURRENT; release tool only, frozen
     builds/           what actually ran
     (anything else)   yours
@@ -55,6 +55,12 @@ creates no folders; the sync tool builds the tree from the cloud.
 - It refuses to run if the root folder does not exist, so an unmounted share
   does not get a store built on the local disk in its place.
 
+## Without Fusion
+
+Make a folder for a design anywhere below the store root, make `wip/`
+inside it, and work there. No command is needed; `check`, `verify`, and
+`index` pick the folder up.
+
 ## Fill it from Fusion
 
 ```sh
@@ -75,7 +81,7 @@ creates no folders; the sync tool builds the tree from the cloud.
 
 `check` finds gaps without hashing anything, so it is quick:
 
-- a missing or duplicated Fusion item id, or a `CURRENT` that names no
+- two folders claiming the same Fusion item, or a `CURRENT` that names no
   revision;
 - a revision without `manifest.json`, `SHA256SUMS`, CAD, a reviewer, or an
   approver;
