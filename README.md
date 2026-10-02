@@ -67,16 +67,33 @@ creates no folders; the sync tool builds the tree from the cloud.
 ## Check and index
 
 ```sh
-./mcad_tree.py check /Volumes/MCAD/MCAD_base   # non-zero exit on problems
+./mcad_tree.py check /Volumes/MCAD/MCAD_base   # find gaps; non-zero exit on problems
+./mcad_tree.py verify /Volumes/MCAD/MCAD_base  # check, plus re-hash every released file
 ./mcad_tree.py index /Volumes/MCAD/MCAD_base   # writes _index/parts.csv
 ./mcad_tree.py add-machine /Volumes/MCAD/MCAD_base haas-vf2
 ```
 
-`check` reports, per design: a missing or duplicated Fusion item id, a
-revision without `manifest.json` or `SHA256SUMS`, a `CURRENT` that names no
-revision, and names inside `released/` that break the naming rule (lowercase
-ASCII, digits, `-`, `_`, `.`, path under 200 characters). Names above the
-revision folder come from Fusion and are not policed.
+`check` finds gaps without hashing anything, so it is quick:
+
+- a missing or duplicated Fusion item id, or a `CURRENT` that names no
+  revision;
+- a revision without `manifest.json`, `SHA256SUMS`, CAD, a reviewer, or an
+  approver;
+- a file the manifest or `SHA256SUMS` lists that is not there, or a file in
+  a revision that `SHA256SUMS` does not list;
+- a machine model the revision claims to be proven on with no G-code or
+  NC program for it (a 3MF counts only if it has G-code inside);
+- a build that does not say what ran, has no inspector or acceptor, or has
+  rejected parts with no disposition;
+- the first build on an unproven machine model accepted without an
+  inspection record;
+- names inside `released/` that break the naming rule (lowercase ASCII,
+  digits, `-`, `_`, `.`, path under 200 characters). Names above the
+  revision folder come from Fusion and are not policed.
+
+`verify` does all of that and re-hashes every released file against its
+`SHA256SUMS`, which reads the whole store. The full list is in
+[docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md).
 
 ## Tests
 
@@ -88,10 +105,12 @@ python3 tests/test_store.py
 
 ## Not built yet
 
-- Release: build `released/<rev>/` from a named Fusion version, write the
-  manifest and `SHA256SUMS`, set `CURRENT`, mark the prior revision
-  `OBSOLETE`, append to `history.jsonl`, copy to `_outbox/` if a machine
-  needs it.
-- Verify: re-check every `SHA256SUMS` on a schedule.
+- Release: build `released/<rev>/` from a named Fusion version, collect the
+  reviewer, approver, and review records, write the manifest and
+  `SHA256SUMS`, set `CURRENT`, mark the prior revision `OBSOLETE`, append
+  to `history.jsonl`, copy to `_outbox/` if a machine needs it.
+- Build logging: nothing writes `builds/` yet; `build.json` and
+  `nonconformance.json` are filled in by hand.
+- Running `verify` on a schedule.
 - The Fusion add-in that provides the Release command.
 - A run of `fusion_sync.py` against a live Autodesk account.
