@@ -139,6 +139,8 @@ Add a `design.json` to give the design a part number and a description.
 ./mcad_tree.py verify /path/to/store   # check, plus re-hash every released file
 ./mcad_tree.py index /path/to/store    # writes _index/parts.csv
 ./mcad_tree.py add-machine /path/to/store haas-vf2
+./mcad_tree.py upgrade /path/to/store  # move a store to a newer schema
+./mcad_tree.py --version               # tool version and schema version
 ```
 
 `check` finds gaps without hashing anything, so it is quick:
@@ -161,6 +163,20 @@ Add a `design.json` to give the design a part number and a description.
 
 `verify` does all of that and re-hashes every released file against its
 `SHA256SUMS`, which reads the whole store.
+
+## Versions
+
+The layout has a schema version, stored in the store's `.mcad-tree.json`;
+it is 2 today. The tools have their own version, shown by `--version`.
+
+Adding an optional folder, file, or field does not change the schema
+version and needs no upgrade. A change that would make a valid store
+invalid raises it, and `mcad_tree.py upgrade` converts the store. An
+upgrade never rewrites a released revision: each revision records the
+schema it was released under and is checked by that version's rules.
+
+The rules and the change log are in
+[docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#versions).
 
 ## Backups
 

@@ -23,6 +23,7 @@ Quick start:
     ./mcad_tree.py verify /Volumes/MCAD/MCAD_base           # check, plus re-hash every released file
     ./mcad_tree.py index /Volumes/MCAD/MCAD_base            # write _index/parts.csv
     ./mcad_tree.py add-machine /Volumes/MCAD/MCAD_base haas-vf2
+    ./mcad_tree.py upgrade /Volumes/MCAD/MCAD_base --dry-run  # move a store to this tool's schema
 """
 
 from __future__ import annotations
@@ -40,7 +41,16 @@ import zipfile
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
+# The version of these tools. It changes with every release of the repository.
+__version__ = "0.1.0"
+# The version of the layout. It changes only when a store that was valid would stop being valid;
+# see "Versions" in docs/CANONICAL_TREE.md.
 SCHEMA_VERSION = 2
+# Schemas whose records check knows how to judge. A frozen revision keeps the schema it was
+# released under, so this list only grows.
+KNOWN_SCHEMAS = (2,)
+# A record that does not state its schema is read as this one.
+FIRST_RECORD_SCHEMA = 2
 MARKER = ".mcad-tree.json"
 SCHEMA_DOC = "SCHEMA.md"
 SCHEMA_SOURCE = Path(__file__).resolve().parent / "docs" / "CANONICAL_TREE.md"
@@ -206,7 +216,7 @@ def init_tree(root: Path, dry_run: bool = False, update_docs: bool = False,
     if marker and marker.get("schema") != SCHEMA_VERSION:
         raise TreeError(
             f"{root} was built at schema {marker.get('schema')}; this tool builds schema {SCHEMA_VERSION}. "
-            "There is no automatic migration."
+            "upgrade moves an older store forward; a newer store needs newer tools."
         )
     sc = Scaffold(root, dry_run, out)
     for rel, text in tool_docs().items():
@@ -343,6 +353,17 @@ def proven_models(design: Path) -> Dict[str, Set[str]]:
     return proven
 
 
+def record_schema(record: dict, what: str, rel: str, problems: List[str]) -> Optional[int]:
+    """The schema a record was written under, or None (and a problem) when this tool cannot judge it.
+    A frozen revision is never rewritten, so it is judged by its own schema, not the store's."""
+    schema = record.get("schema", FIRST_RECORD_SCHEMA)
+    if schema in KNOWN_SCHEMAS:
+        return schema
+    problems.append(f"{what} is at schema {schema}, which this tool does not know "
+                    f"(it knows {', '.join(str(s) for s in KNOWN_SCHEMAS)}): {rel}")
+    return None
+
+
 def check_manifest(revision: Path, rel: str, problems: List[str]) -> None:
     """A revision names who reviewed and approved it, and holds what its manifest says it holds."""
     try:
@@ -352,6 +373,8 @@ def check_manifest(revision: Path, rel: str, problems: List[str]) -> None:
         return
     if manifest is None:
         return  # already reported as missing
+    if record_schema(manifest, MANIFEST_FILE, rel, problems) is None:
+        return
     approval = section(manifest, "approval")
     for key in ("reviewed_by", "approved_by"):
         if not approval.get(key):
@@ -432,6 +455,8 @@ def check_builds(root: Path, design: Path, problems: List[str], notes: List[str]
         if build is None:
             problems.append(f"build has no {BUILD_FILE}: {rel}")
             continue
+        if record_schema(build, BUILD_FILE, rel, problems) is None:
+            continue
         revision, model = (v if isinstance(v, str) else None
                            for v in (build.get("revision"), build.get("machine_model")))
         if not revision:
@@ -492,7 +517,8 @@ def check_tree(root: Path, hashes: bool = False) -> Tuple[List[str], List[str]]:
     if marker is None:
         problems.append(f"no {MARKER}: this folder has not been initialized")
     elif marker.get("schema") != SCHEMA_VERSION:
-        problems.append(f"schema is {marker.get('schema')}, this tool expects {SCHEMA_VERSION}")
+        problems.append(f"schema is {marker.get('schema')}, this tool expects {SCHEMA_VERSION} "
+                        "(upgrade moves an older store forward)")
 
     for rel, text in tool_docs().items():
         path = root / rel
@@ -532,6 +558,64 @@ def check_tree(root: Path, hashes: bool = False) -> Tuple[List[str], List[str]]:
         check_builds(root, design, problems, notes)
 
     return problems, notes
+
+
+# From-version -> the step that converts a store to the next version. A step takes (root, dry_run,
+# out) and must not touch a frozen revision; upgrade_tree checks that afterwards. Empty until a
+# schema follows 2.
+UPGRADES: Dict[int, Callable[[Path, bool, Callable[[str], None]], None]] = {}
+
+
+def frozen_files(root: Path) -> List[Tuple[str, str]]:
+    """Every file in every frozen revision as (revision/path, digest), wherever its design folder
+    sits. An upgrade may move a design folder; it may not change what a revision holds."""
+    files: List[Tuple[str, str]] = []
+    for design in find_designs(root):
+        released = design / RELEASED_DIRNAME
+        for entry in os.listdir(released) if released.is_dir() else []:
+            revision = released / entry
+            if revision.is_dir() and (revision / SUMS_FILE).exists():
+                for name in revision_files(revision) | {SUMS_FILE}:
+                    files.append((f"{entry}/{name}", file_digest(revision / name)))
+    return sorted(files)
+
+
+def upgrade_tree(root: Path, dry_run: bool = False, out: Callable[[str], None] = print) -> int:
+    """Move a store from an older schema to this tool's. Returns the number of steps run. The marker
+    is rewritten last, and only after every frozen revision is shown to be unchanged."""
+    require_root(root)
+    marker = read_json(root / MARKER)
+    if marker is None:
+        raise TreeError(f"{root} has not been initialized. Run init first.")
+    have = marker.get("schema")
+    if have == SCHEMA_VERSION:
+        return 0
+    if not isinstance(have, int) or have > SCHEMA_VERSION:
+        raise TreeError(f"{root} is at schema {have}; this tool works on schema {SCHEMA_VERSION}. "
+                        "Use a newer version of the tools.")
+    steps = list(range(have, SCHEMA_VERSION))
+    for version in steps:
+        if version not in UPGRADES:
+            raise TreeError(f"There is no upgrade from schema {version} to schema {version + 1}.")
+    before = frozen_files(root)
+    for version in steps:
+        out(f"  schema {version} -> {version + 1}")
+        UPGRADES[version](root, dry_run, out)
+    if dry_run:
+        return len(steps)
+    if frozen_files(root) != before:
+        raise TreeError(f"The upgrade changed a frozen revision. The store is still marked schema {have}; "
+                        "restore it from backup.")
+    marker.update({
+        "schema": SCHEMA_VERSION,
+        "upgraded_from": have,
+        "upgraded_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    })
+    (root / MARKER).write_text(json.dumps(marker, indent=2) + "\n", encoding="utf-8")
+    sc = Scaffold(root, dry_run, out)
+    for rel, text in tool_docs().items():
+        sc.write(rel, text, update=True)
+    return len(steps)
 
 
 def build_index(root: Path, dry_run: bool = False, out: Callable[[str], None] = print) -> int:
@@ -609,8 +693,20 @@ def cmd_add_machine(args: argparse.Namespace) -> None:
     summarize(add_machine(Path(args.root), args.name, args.dry_run), args.dry_run)
 
 
+def cmd_upgrade(args: argparse.Namespace) -> None:
+    root = Path(args.root)
+    steps = upgrade_tree(root, args.dry_run)
+    if not steps:
+        print(f"{root} is already at schema {SCHEMA_VERSION}. Nothing to do.")
+    elif args.dry_run:
+        print(f"{steps} step(s) would run. Nothing was written.")
+    else:
+        print(f"{root} is now at schema {SCHEMA_VERSION}.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Set up and check an MCAD_base file store.")
+    p.add_argument("--version", action="version", version=f"mcad_tree {__version__} (schema {SCHEMA_VERSION})")
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("init", help="mark a folder as a store and write its docs; never overwrites or deletes")
@@ -637,6 +733,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name", help="e.g. haas-vf2")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_add_machine)
+
+    s = sub.add_parser("upgrade", help="move a store from an older schema to this tool's; never changes a released revision")
+    s.add_argument("root")
+    s.add_argument("--dry-run", action="store_true", help="show the steps without writing")
+    s.set_defaults(func=cmd_upgrade)
 
     return p
 

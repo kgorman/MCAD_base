@@ -378,6 +378,9 @@ In a build:
 - rejected parts with no `nonconformance.json`, or one without a
   description, a disposition, and who decided.
 
+In either: a `manifest.json` or `build.json` at a schema this version of
+the tool does not know.
+
 A build still awaiting inspection is a note, not a problem.
 
 What it cannot find: an artifact your shop expects that neither the
@@ -443,6 +446,56 @@ and `verify`.
   is a coherent point in time for every design.
 - With more than one person writing: a sync account and a release account,
   and NAS permissions that match the table above.
+
+## Versions
+
+Two numbers, kept apart:
+
+- **The schema version** is the layout's. It is a whole number, stored in
+  `.mcad-tree.json` at the root and in each record (`design.json`,
+  `manifest.json`, `build.json`, `nonconformance.json`). This document
+  describes schema 2.
+- **The tool version** is the version of `mcad_tree.py` and
+  `fusion_sync.py`, shown by `--version` and tagged in the repository as
+  `v<version>`. It changes with every release of the tools. Many tool
+  versions work on one schema.
+
+When the schema version changes:
+
+- It does **not** change for an addition that a valid store is still valid
+  without: a new optional folder, file, or key. Nothing has to be
+  upgraded, and tools that do not know the addition ignore it.
+- It **does** change, by one, for anything that would make a valid store
+  invalid: a new required file or key, a rename, a moved folder, or a
+  changed meaning.
+
+What happens when it changes:
+
+- `mcad_tree.py upgrade <root>` converts a store from the version before.
+  `--dry-run` shows the steps without writing. The marker is rewritten
+  last, so a store is never marked as a version it has not reached.
+- A frozen revision is never rewritten, by an upgrade or anything else. It
+  keeps the `schema` its `manifest.json` was released under, and `check`
+  judges it by that version's rules. `upgrade` hashes every file in every
+  frozen revision before and after, and refuses to mark the store if one
+  changed.
+- A completed build record is not rewritten either, and is judged the same
+  way.
+- A record that states no `schema` is read as schema 2.
+- A tool refuses a store at a schema it does not target. An older store
+  needs `upgrade`; a newer store needs newer tools.
+- Back the store up before an upgrade.
+
+Change log:
+
+- **Schema 2**, current. One folder per design, holding `wip/`,
+  `released/`, and `builds/`. Sign-offs, build and nonconformance records,
+  `proven_on`, and designs made by hand were added while the schema was
+  still being settled and no store held released revisions, so the number
+  did not change. From tool version 0.1.0 the rules above apply.
+- **Schema 1.** An early layout keyed on part number, with separate
+  `mirror/`, `released/`, `nc/`, and `print/` trees at the root. Never
+  used outside development. There is no upgrade from it.
 
 ## Mapping to the standards
 

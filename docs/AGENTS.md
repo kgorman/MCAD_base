@@ -148,6 +148,23 @@ Write code that satisfies every line here.
 - `fusion_item_id` is only for designs synced from Fusion. Two folders
   must never carry the same one.
 
+## Versions
+
+- The store's schema version is `schema` in `.mcad-tree.json`. Write
+  `"schema": <that number>` into every `design.json`, `manifest.json`,
+  `build.json`, and `nonconformance.json` you create.
+- A store can hold records at an older schema: frozen revisions and
+  completed builds are never rewritten when a store is upgraded. Read each
+  record by the `schema` it states. A record that states none is schema 2.
+- Do not rewrite an old record to bring it up to date. Do not write an
+  upgrade of your own; `mcad_tree.py upgrade` is the only thing that
+  changes a store's version.
+- If a record states a schema your code does not know, do not guess.
+  Report it and leave the record alone.
+- An optional folder, file, or key does not change the schema version. If
+  your product needs something the layout lacks, propose it as an optional
+  addition in an issue on the MCAD_base repository.
+
 ## Order of writes for a release
 
 1. Create `released/<rev>/` and put every file in it.

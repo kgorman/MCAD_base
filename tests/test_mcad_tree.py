@@ -8,6 +8,7 @@ import tempfile
 import zipfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import mcad_tree as mt  # noqa: E402
@@ -385,6 +386,98 @@ class McadTreeTest(unittest.TestCase):
         with self.assertRaises(mt.TreeError):
             mt.add_machine(self.root, "Haas VF2", out=quiet)
         self.assertEqual(mt.check_tree(self.root), ([], []))
+
+    # -- versions ---------------------------------------------------------- #
+
+    def set_record_schema(self, path, schema):
+        data = json.loads(path.read_text())
+        data["schema"] = schema
+        path.write_text(json.dumps(data))
+
+    def test_check_judges_a_record_by_its_own_schema(self):
+        mt.init_tree(self.root, out=quiet)
+        design = self.make_design()
+        rev = self.make_revision(design)        # its manifest states no schema: read as schema 2
+        build = self.make_build(design)
+        self.assertEqual(mt.check_tree(self.root)[0], [])
+
+        self.set_record_schema(build / "build.json", 2)
+        self.assertEqual(mt.check_tree(self.root)[0], [])
+
+        self.set_record_schema(build / "build.json", 9)
+        self.set_record_schema(rev / "manifest.json", 9)
+        self.freeze(rev)
+        problems = mt.check_tree(self.root)[0]
+        self.assertEqual(len(problems), 2, problems)
+        self.assertTrue(any("manifest.json is at schema 9" in p for p in problems), problems)
+        self.assertTrue(any("build.json is at schema 9" in p for p in problems), problems)
+
+    def test_upgrade_has_nothing_to_do_on_a_current_store(self):
+        mt.init_tree(self.root, out=quiet)
+        marker = (self.root / mt.MARKER).read_text()
+        self.assertEqual(mt.upgrade_tree(self.root, out=quiet), 0)
+        self.assertEqual((self.root / mt.MARKER).read_text(), marker)
+
+    def test_upgrade_refuses_what_it_cannot_do(self):
+        with self.assertRaises(mt.TreeError):               # not a store
+            mt.upgrade_tree(self.root, out=quiet)
+        mt.init_tree(self.root, out=quiet)
+        for schema, message in ((mt.SCHEMA_VERSION + 1, "newer version of the tools"),
+                                (mt.SCHEMA_VERSION - 1, "no upgrade from schema")):
+            (self.root / mt.MARKER).write_text(json.dumps({"schema": schema}))
+            with self.assertRaises(mt.TreeError) as ctx:
+                mt.upgrade_tree(self.root, out=quiet)
+            self.assertIn(message, str(ctx.exception))
+            self.assertEqual(json.loads((self.root / mt.MARKER).read_text()), {"schema": schema})
+
+    def upgradable_store(self):
+        """A schema 2 store with a frozen revision, as seen by a tool whose schema is 3."""
+        mt.init_tree(self.root, out=quiet)
+        design = self.make_design()
+        return design, self.make_revision(design)
+
+    def test_upgrade_runs_the_steps_and_marks_the_store_last(self):
+        design, rev = self.upgradable_store()
+        seen = []
+
+        def step(root, dry_run, out):
+            seen.append(dry_run)
+            if not dry_run:
+                (design / "added-by-upgrade.txt").write_text("new in schema 3")
+
+        with mock.patch.object(mt, "SCHEMA_VERSION", 3), mock.patch.dict(mt.UPGRADES, {2: step}):
+            self.assertEqual(mt.upgrade_tree(self.root, dry_run=True, out=quiet), 1)
+            self.assertEqual(json.loads((self.root / mt.MARKER).read_text())["schema"], 2)
+            self.assertFalse((design / "added-by-upgrade.txt").exists())
+
+            self.assertEqual(mt.upgrade_tree(self.root, out=quiet), 1)
+            marker = json.loads((self.root / mt.MARKER).read_text())
+            self.assertEqual((marker["schema"], marker["upgraded_from"]), (3, 2))
+            self.assertIn("created_at", marker)
+            self.assertTrue((design / "added-by-upgrade.txt").exists())
+            self.assertEqual(mt.upgrade_tree(self.root, out=quiet), 0)   # second run: nothing to do
+        self.assertEqual(seen, [True, False])
+        # The revision released under schema 2 is untouched and still verifies.
+        self.assertEqual([p for p in mt.check_tree(self.root, hashes=True)[0] if "rev-a" in p], [])
+
+    def test_upgrade_may_move_a_design_but_not_change_a_frozen_revision(self):
+        design, rev = self.upgradable_store()
+
+        def move(root, dry_run, out):
+            design.rename(design.parent / "Spacers")
+
+        def tamper(root, dry_run, out):
+            (design.parent / "Spacers" / "released" / "rev-a" / "cad" / "bm-0042.step").write_text("edited")
+
+        with mock.patch.object(mt, "SCHEMA_VERSION", 3):
+            with mock.patch.dict(mt.UPGRADES, {2: move}):
+                self.assertEqual(mt.upgrade_tree(self.root, out=quiet), 1)
+            (self.root / mt.MARKER).write_text(json.dumps({"schema": 2}))
+            with mock.patch.dict(mt.UPGRADES, {2: tamper}):
+                with self.assertRaises(mt.TreeError) as ctx:
+                    mt.upgrade_tree(self.root, out=quiet)
+            self.assertIn("changed a frozen revision", str(ctx.exception))
+            self.assertEqual(json.loads((self.root / mt.MARKER).read_text()), {"schema": 2})
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ class StoreTest(unittest.TestCase):
             self.assertEqual(getattr(fs, name), getattr(mt, name), name)
         self.assertEqual(fs.STORE_MARKER, mt.MARKER)
         self.assertEqual(fs.STORE_SCHEMA, mt.SCHEMA_VERSION)
-        self.assertEqual(fs.STORE_SCHEMA, mt.SCHEMA_VERSION)
+        self.assertEqual(fs.__version__, mt.__version__)
 
     def test_synced_store_passes_check_and_indexes(self):
         self.sync()

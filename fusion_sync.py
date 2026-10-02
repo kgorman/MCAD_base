@@ -85,6 +85,7 @@ HISTORY_FILE = "history.jsonl"
 DELETED_MARKER = "DELETED_IN_CLOUD"
 STORE_MARKER = ".mcad-tree.json"  # written by mcad_tree.py init
 STORE_SCHEMA = 2
+__version__ = "0.1.0"  # the tools' version; kept in step with mcad_tree.py
 
 # Preferred export formats per Fusion item kind when the user asks for "native".
 # f3z is the archive form used when a design references external components.
@@ -145,7 +146,8 @@ def require_store(root: Path) -> None:
         raise StoreError(f"{root} is not an MCAD_base store (no {STORE_MARKER}). Is the share mounted? "
                          f"To set one up: mcad_tree.py init {root}")
     if marker.get("schema") != STORE_SCHEMA:
-        raise StoreError(f"{root} is at schema {marker.get('schema')}; this tool writes schema {STORE_SCHEMA}.")
+        raise StoreError(f"{root} is at schema {marker.get('schema')}; this tool writes schema {STORE_SCHEMA}. "
+                         f"For an older store: mcad_tree.py upgrade {root}")
 
 
 def write_json(path: Path, data: Any, *, private: bool = False) -> None:
@@ -963,6 +965,7 @@ def cmd_uninstall_launchd(_args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="fusion_sync.py", description="Mirror Fusion 360 cloud designs to a local folder.")
+    p.add_argument("--version", action="version", version=f"fusion_sync {__version__} (schema {STORE_SCHEMA})")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("init", help="write config")
