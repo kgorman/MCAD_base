@@ -1,9 +1,13 @@
 # MCAD_base
 
-Working name. Tools for keeping mechanical CAD on a NAS in a layout that
-survives an audit: a file store shaped like the Fusion cloud, where every
-design has one folder holding its latest cloud export, its frozen released
-revisions, and the record of what was built from them.
+Working name. Product data management (PDM) for mechanical CAD, kept in
+plain folders on a NAS. The file system is the database: every record is a
+plain file in the tree, with no server and no separate database, so the
+store stays readable without these tools.
+
+The layout is meant to survive an audit: a file store shaped like the
+Fusion cloud, where every design has one folder holding its working files,
+its frozen released revisions, and the record of what was built from them.
 
 Standard library Python only. Python 3.9+.
 
