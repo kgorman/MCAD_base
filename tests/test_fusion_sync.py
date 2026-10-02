@@ -285,6 +285,14 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(fs.safe_name("  trailing. "), "trailing")
         self.assertEqual(fs.safe_name(""), "_unnamed")
 
+    def test_safe_name_avoids_names_windows_reserves(self):
+        self.assertEqual(fs.safe_name("CON"), "CON_")
+        self.assertEqual(fs.safe_name("nul.step"), "nul_.step")
+        self.assertEqual(fs.safe_name("COM1"), "COM1_")
+        self.assertEqual(fs.safe_name("lpt9.tar.gz"), "lpt9_.tar.gz")
+        for ordinary in ("Console", "COM10", "Connector.f3d", "aux bracket"):
+            self.assertEqual(fs.safe_name(ordinary), ordinary)
+
     def test_choose_formats(self):
         self.assertEqual(fs.choose_formats(["native"], ["f3d", "f3z", "step"], "design"), ["f3z"])
         self.assertEqual(fs.choose_formats(["native"], ["f3d", "step"], "design"), ["f3d"])

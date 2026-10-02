@@ -23,7 +23,7 @@ file came from, so re-running only fetches what changed.
 Standard library only. Python 3.9+.
 
 Quick start:
-    ./fusion_sync.py init --client-id <APS_CLIENT_ID> --root /Volumes/MCAD/MCAD_base
+    ./fusion_sync.py init --client-id <APS_CLIENT_ID> --root /path/to/store
     ./fusion_sync.py auth              # opens browser once, caches refresh token
     ./fusion_sync.py hubs              # sanity check
     ./fusion_sync.py sync              # mirror everything
@@ -85,7 +85,7 @@ HISTORY_FILE = "history.jsonl"
 DELETED_MARKER = "DELETED_IN_CLOUD"
 STORE_MARKER = ".mcad-tree.json"  # written by mcad_tree.py init
 STORE_SCHEMA = 2
-__version__ = "0.1.0"  # the tools' version; kept in step with mcad_tree.py
+__version__ = "0.1.1"  # the tools' version; kept in step with mcad_tree.py
 
 # Preferred export formats per Fusion item kind when the user asks for "native".
 # f3z is the archive form used when a design references external components.
@@ -110,11 +110,17 @@ def log(msg: str, *, err: bool = False) -> None:
 
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+# Names Windows will not allow for a file or folder, with or without an extension.
+_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"{dev}{n}" for dev in ("COM", "LPT") for n in range(1, 10)}
 
 
 def safe_name(name: str) -> str:
-    """Make a cloud display name safe as a single path component."""
+    """Make a cloud display name safe as a single path component, on every platform a store is
+    opened from, so the same design has the same folder name whichever machine ran the sync."""
     cleaned = _UNSAFE.sub("_", name).strip().rstrip(".")
+    stem, dot, rest = cleaned.partition(".")
+    if stem.strip().upper() in _RESERVED:
+        cleaned = f"{stem}_{dot}{rest}"
     return cleaned or "_unnamed"
 
 

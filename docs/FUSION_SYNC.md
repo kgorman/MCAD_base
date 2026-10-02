@@ -13,7 +13,7 @@ your hubs, projects, and folders. Every cloud item becomes a folder, and the exp
 goes in its `wip/` subfolder.
 
 ```
-/Volumes/MCAD/MCAD_base/
+/path/to/store/
   Kenny's Hub/
     Bike/
       Headset Spacers/
@@ -66,7 +66,7 @@ errors. A partial pass cannot tell "deleted" from "not looked at".
 
 ```sh
 chmod +x fusion_sync.py
-./fusion_sync.py init --client-id <CLIENT_ID> --root /Volumes/MCAD/MCAD_base
+./fusion_sync.py init --client-id <CLIENT_ID> --root /path/to/store
 ./fusion_sync.py auth        # browser opens once; refresh token is cached
 ./fusion_sync.py hubs        # lists hubs and projects to confirm access
 ```

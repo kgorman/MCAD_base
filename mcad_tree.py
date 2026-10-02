@@ -2,28 +2,28 @@
 """
 mcad_tree.py - set up and check an MCAD_base file store.
 
-The store is one folder per design. For designs synced from Fusion, the folders
-above follow the cloud: hub, project, folder. A design can also be made by hand. Everything about a design lands in its folder:
-the latest cloud export in wip/, frozen revisions in released/, records of
-what actually ran in builds/, and any loose material beside them. The layout
-and its rules are in docs/CANONICAL_TREE.md, which is copied into the store as
-SCHEMA.md.
+The store is one folder per design, anywhere below the root. Everything about
+a design lands in its folder: working files in wip/, frozen revisions in
+released/, records of what actually ran in builds/, and any loose material
+beside them. The layout and its rules are in docs/CANONICAL_TREE.md, which is
+copied into the store as SCHEMA.md.
 
-`init` marks a folder as a store. fusion_sync.py creates the hubs, projects,
-and design folders for Fusion; anyone can make a design folder by hand. `check` finds what is missing or out of place, `verify`
-also re-hashes every released file, and `index` writes a part-number lookup. All are safe to re-run; none overwrite or delete what
-they did not write.
+`init` marks a folder as a store. People make design folders by hand; a sync
+tool such as fusion_sync.py makes them from a CAD system's cloud. `check`
+finds what is missing or out of place, `verify` also re-hashes every released
+file, and `index` writes a part-number lookup. All are safe to re-run; none
+overwrite or delete what they did not write.
 
 Standard library only. Python 3.9+.
 
 Quick start:
-    ./mcad_tree.py init /Volumes/MCAD/MCAD_base --dry-run   # show what would be created
-    ./mcad_tree.py init /Volumes/MCAD/MCAD_base             # create it
-    ./mcad_tree.py check /Volumes/MCAD/MCAD_base            # find gaps: missing files, records, sign-offs
-    ./mcad_tree.py verify /Volumes/MCAD/MCAD_base           # check, plus re-hash every released file
-    ./mcad_tree.py index /Volumes/MCAD/MCAD_base            # write _index/parts.csv
-    ./mcad_tree.py add-machine /Volumes/MCAD/MCAD_base haas-vf2
-    ./mcad_tree.py upgrade /Volumes/MCAD/MCAD_base --dry-run  # move a store to this tool's schema
+    ./mcad_tree.py init /path/to/store --dry-run   # show what would be created
+    ./mcad_tree.py init /path/to/store             # create it
+    ./mcad_tree.py check /path/to/store            # find gaps: missing files, records, sign-offs
+    ./mcad_tree.py verify /path/to/store           # check, plus re-hash every released file
+    ./mcad_tree.py index /path/to/store            # write _index/parts.csv
+    ./mcad_tree.py add-machine /path/to/store haas-vf2
+    ./mcad_tree.py upgrade /path/to/store --dry-run  # move a store to this tool's schema
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 # The version of these tools. It changes with every release of the repository.
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 # The version of the layout. It changes only when a store that was valid would stop being valid;
 # see "Versions" in docs/CANONICAL_TREE.md.
 SCHEMA_VERSION = 2
@@ -90,32 +90,35 @@ ROOT_README = """\
 
 Shop CAD file store, laid out per SCHEMA.md (schema version {schema}).
 
-The tree follows Fusion: hub, project, folder, then one folder per design.
-Inside a design folder:
+One folder per design, anywhere below this folder. Arrange the folders above
+a design however the shop likes. A folder is a design when it holds `wip/`,
+`released/`, or `builds/`. Inside a design folder:
 
 | Name | What it is | Who writes |
 |---|---|---|
-| `design.json` | identity: Fusion item id, part number, description; optional for a design made by hand | sync tool; you may add fields |
-| `history.jsonl` | ledger: synced, released, built | tools, append-only |
-| `wip/` | work in progress: the files being worked on; for a design synced from Fusion, also the latest export from the cloud | you; the sync tool replaces only the files it wrote |
-| `released/` | frozen revisions, one folder per revision | release tool only |
-| `builds/` | records of what actually ran, who inspected and accepted it, and what was rejected | operators, farm software |
+| `wip/` | work in progress: the files being worked on | you; a sync tool replaces only the files it wrote |
+| `released/` | frozen revisions, one folder per revision | whoever releases; nothing changes after sign-off |
+| `builds/` | records of what actually ran, who inspected and accepted it, and what was rejected | operators, shop software |
+| `design.json` | optional: part number, description; for a synced design, its id in the CAD system | you; a sync tool keeps its own keys |
+| `history.jsonl` | ledger: released, built, synced | appended to, never rewritten |
 | anything else | photos, loose STLs, notes | you |
 
-Backup and release are different things. `wip/` changes whenever the design
-does. A revision under `released/` never changes after it is signed off.
+Working files and releases are different things. `wip/` changes whenever the
+design does. A revision under `released/` never changes after it is signed
+off. Do not edit anything under `released/`.
 
-Do not edit anything under `released/`.
-
-`wip/` is the working folder for every design, whatever made it. For a design
-synced from Fusion, the sync keeps the latest cloud export there and replaces
+To start a design, make a folder for it, make `wip/` inside it, and work
+there with whatever CAD system the shop uses. For a design synced from a CAD
+system's cloud, the sync also keeps the latest export in `wip/` and replaces
 only its own files; do not edit those, because the next sync overwrites them.
 
-To start a design without Fusion, make a folder for it anywhere under a
-project folder, make `wip/` inside it, and work there.
+Machines run released files, never `wip/`. The program for a machine is in
+`released/<revision>/build/<process>/<model>/` or `released/<revision>/cam/<model>/`,
+and `released/CURRENT` names the revision to run. SCHEMA.md says how to make
+a release by hand and how to get one to a machine.
 
-This layout is maintained by `mcad_tree.py`. Run `mcad_tree.py check <this folder>`
-to see whether the store still follows the schema.
+Run `mcad_tree.py check <this folder>` to see whether the store still follows
+the schema.
 """
 
 # Things the NAS or a client OS drops on a share; never ours, never reported.
@@ -145,6 +148,12 @@ def ignored(name: str) -> bool:
 
 def valid_name(name: str) -> bool:
     return name in WELL_KNOWN or bool(NAME_RE.match(name))
+
+
+def store_path(path, root: Path, sep: str = os.sep) -> str:
+    """A path relative to the store root, with forward slashes on every platform, so the index and
+    the messages are the same whichever machine wrote them."""
+    return os.path.relpath(path, root).replace(sep, "/")
 
 
 def read_json(path: Path) -> Optional[dict]:
@@ -398,7 +407,7 @@ def check_released(root: Path, design: Path, problems: List[str],
         return
 
     def rel(path) -> str:
-        return os.path.relpath(path, root)
+        return store_path(path, root)
 
     revisions = []
     for entry in sorted(os.listdir(released)):
@@ -445,7 +454,7 @@ def check_builds(root: Path, design: Path, problems: List[str], notes: List[str]
         path = builds / entry
         if ignored(entry) or not path.is_dir():
             continue
-        rel = os.path.relpath(path, root)
+        rel = store_path(path, root)
         try:
             build = read_json(path / BUILD_FILE)
             nonconformance = read_json(path / NONCONFORMANCE_FILE)
@@ -538,7 +547,7 @@ def check_tree(root: Path, hashes: bool = False) -> Tuple[List[str], List[str]]:
 
     seen: Dict[str, str] = {}
     for design in find_designs(root):
-        rel = os.path.relpath(design, root)
+        rel = store_path(design, root)
         try:
             info = read_json(design / DESIGN_FILE) or {}
         except TreeError as exc:
@@ -630,7 +639,7 @@ def build_index(root: Path, dry_run: bool = False, out: Callable[[str], None] = 
             "kind": info.get("kind") or "",
             "hub": info.get("hub") or "",
             "project": info.get("project") or "",
-            "path": os.path.relpath(design, root),
+            "path": store_path(design, root),
             "current_revision": current_revision(design) or "",
             "wip_version": (info.get("wip") or {}).get("version_number") or "",
             "deleted_in_cloud": "yes" if (design / DELETED_MARKER).exists() else "",
@@ -647,7 +656,7 @@ def build_index(root: Path, dry_run: bool = False, out: Callable[[str], None] = 
 
 
 def add_machine(root: Path, name: str, dry_run: bool = False, out: Callable[[str], None] = print) -> int:
-    """A flat, safely named folder a machine can mount. The release tool copies into it; it is never a file's home."""
+    """A flat, safely named folder a machine can mount. Released files are copied into it; it is never a file's home."""
     require_store(root)
     if not NAME_RE.match(name):
         raise TreeError(f"'{name}' breaks the naming rule: lowercase letters, digits, '-', '_', '.' only")

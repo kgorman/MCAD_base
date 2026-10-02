@@ -1,13 +1,16 @@
 # MCAD_base
 
-Product data management (PDM) for mechanical CAD, kept in plain folders on
-a NAS or any shared drive. The file system is the database: every record is
-a plain file in the tree, with no server and no separate database, so the
-store stays readable without these tools.
+Product data management (PDM) for shops that make parts by CNC machining
+and additive manufacturing, kept in plain folders on a NAS or any shared
+drive. The file system is the database: every record is a plain file in
+the tree, with no server and no separate database, so the store stays
+readable without these tools.
 
-Every design has one folder holding its working files, its frozen released
-revisions, and the record of what was built from them. The layout works
-with any CAD or CAM system, for printed and machined parts.
+Every design has one folder holding its working CAD files, its frozen
+released revisions, the G-code and NC programs its machines run, and the
+record of what was built from them. The layout works with any CAD or CAM
+system, and printers and CNC machines take their files straight from a
+released revision.
 
 It is built to help a shop meet ISO 9001: the records an auditor asks for
 are files in the design's own folder. See [ISO alignment](#iso-alignment).
@@ -77,10 +80,8 @@ py mcad_tree.py check D:\store
   On Windows, run `py fusion_sync.py sync` from Task Scheduler.
 
 The tools have not been run on Windows yet. Known gaps are tracked in
-[#8](https://github.com/kgorman/MCAD_base/issues/8) (the index writes
-backslash paths) and
-[#9](https://github.com/kgorman/MCAD_base/issues/9) (long paths, reserved
-names, and token storage in the sync).
+[#9](https://github.com/kgorman/MCAD_base/issues/9) (long paths and token
+storage in the sync).
 
 ## The store
 
@@ -132,6 +133,47 @@ command is needed; `check`, `verify`, and `index` pick the folder up.
 
 Add a `design.json` to give the design a part number and a description.
 
+## Release a revision
+
+A release is made by hand, with a file manager and a terminal:
+
+1. Make `released/rev-a/` in the design folder.
+2. Copy in the CAD, drawings, and the program for each machine model, with
+   lowercase names and no spaces.
+3. Write a short `manifest.json` naming who reviewed and approved it.
+4. Write `SHA256SUMS` over the folder. The revision is now frozen.
+5. Put the revision name in `released/CURRENT`.
+
+The full steps, with the manifest and the checksum command, are in
+[docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#releasing-a-revision-by-hand).
+`verify` confirms the result.
+
+## Get a release to a printer or CNC machine
+
+Machines run files from a released revision, never from `wip/`.
+`released/CURRENT` names the revision to run, and inside it each machine
+model has its own folder:
+
+- a printer's G-code or sliced 3MF is in `build/<process>/<model>/`, for
+  example `released/rev-a/build/fdm/bambu-p1s/`;
+- a CNC machine's NC programs and setup sheets are in `cam/<model>/`, for
+  example `released/rev-a/cam/haas-vf2/`.
+
+Three ways to get the file to the machine:
+
+- **Open it from the revision folder.** A PC at the machine, a slicer, print
+  farm software, or DNC software reads it where it is. Read-only access is
+  enough.
+- **Carry it.** Copy it to a USB stick or an SD card.
+- **Use an outbox.** For a control that mounts a network share but cannot
+  handle deep folders or long names, `add-machine` makes a flat
+  `_outbox/<machine>/` folder. Copy that machine's programs into it at
+  each release and share only that folder with the machine.
+
+Afterwards, record the run under `builds/` with a copy of the exact file
+that ran. More in
+[docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#getting-a-release-to-a-machine).
+
 ## Check and index
 
 ```sh
@@ -163,6 +205,16 @@ Add a `design.json` to give the design a part number and a description.
 
 `verify` does all of that and re-hashes every released file against its
 `SHA256SUMS`, which reads the whole store.
+
+Run `verify` on a schedule so a damaged or changed release is found early.
+It exits non-zero when it finds a problem, so any scheduler can alert on
+it. With cron on macOS or Linux, weekly on Sunday at 03:00:
+
+```
+0 3 * * 0 /path/to/MCAD_base/mcad_tree.py verify /path/to/store >> /path/to/verify.log 2>&1
+```
+
+On Windows, run `py mcad_tree.py verify D:\store` from Task Scheduler.
 
 ## Versions
 
@@ -297,16 +349,8 @@ python3 tests/test_store.py
 Apache-2.0, for everything in this repository: the layout, `mcad_tree.py`,
 and `fusion_sync.py`. See [LICENSE](LICENSE).
 
-## Not built yet
+## Not done yet
 
-- Release: build `released/<rev>/` from the working files, collect the
-  reviewer, approver, and review records, write the manifest and
-  `SHA256SUMS`, set `CURRENT`, mark the prior revision `OBSOLETE`, append
-  to `history.jsonl`, copy to `_outbox/` if a machine needs it. Revisions
-  are assembled by hand until then.
-- Build logging: nothing writes `builds/` yet; `build.json` and
-  `nonconformance.json` are filled in by hand.
-- Running `verify` on a schedule.
 - Assemblies whose files sit in more than one design folder.
-- Fusion: a run of the sync against a live account, and an add-in that
-  provides a Release command.
+- A run of the Fusion sync against a live Autodesk account.
+- A run of either tool on Windows.

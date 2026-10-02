@@ -53,7 +53,7 @@ class McadTreeTest(unittest.TestCase):
         return path
 
     def freeze(self, rev):
-        """Write SHA256SUMS over everything now in the revision, as the release tool will."""
+        """Write SHA256SUMS over everything now in the revision, as a release does."""
         lines = [f"{mt.file_digest(rev / name)}  {name}\n" for name in sorted(mt.revision_files(rev))]
         (rev / "SHA256SUMS").write_text("".join(lines))
 
@@ -386,6 +386,28 @@ class McadTreeTest(unittest.TestCase):
         with self.assertRaises(mt.TreeError):
             mt.add_machine(self.root, "Haas VF2", out=quiet)
         self.assertEqual(mt.check_tree(self.root), ([], []))
+
+    # -- paths ------------------------------------------------------------- #
+
+    def test_paths_use_forward_slashes_on_every_platform(self):
+        # What os.path.relpath returns on Windows, turned into the one form the store uses.
+        with mock.patch.object(mt.os.path, "relpath", return_value="Hub\\Bike\\Headset Spacers"):
+            self.assertEqual(mt.store_path("ignored", self.root, sep="\\"), "Hub/Bike/Headset Spacers")
+        # Elsewhere a backslash is an ordinary character in a name and is left alone.
+        self.assertEqual(mt.store_path(self.root / "Hub" / "a\\b", self.root, sep="/"), "Hub/a\\b")
+
+        mt.init_tree(self.root, out=quiet)
+        design = self.make_design(part_number="bm-0042")
+        self.make_revision(design)
+        (design / "released" / "rev-a" / "cad" / "Bad Name.step").write_text("")
+        problems = mt.check_tree(self.root)[0]
+        self.assertTrue(problems)
+        for line in problems:
+            self.assertNotIn("\\", line)
+        self.assertIn("Kenny's Hub/Bike/Headset Spacers/released/rev-a", problems[0])
+        mt.build_index(self.root, out=quiet)
+        with (self.root / "_index" / "parts.csv").open() as fh:
+            self.assertEqual([r["path"] for r in csv.DictReader(fh)], ["Kenny's Hub/Bike/Headset Spacers"])
 
     # -- versions ---------------------------------------------------------- #
 

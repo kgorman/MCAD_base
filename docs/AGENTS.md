@@ -29,8 +29,15 @@ Three sources, in order of authority:
 - **Users are the operating system's users.** There are no accounts or
   roles in MCAD_base. Do not add any.
 - **Tools report; they do not block.** People work in `wip/` with whatever
-  CAD system they use, and make design folders by hand. Do not require a
-  command, a registration step, or a workflow before someone can work.
+  CAD system they use, and make design folders and releases by hand. Do
+  not require a command, a registration step, or a workflow before someone
+  can work. A release your tool makes must be the same files a person
+  would have made.
+- **Machines run released files.** A printer's G-code is in
+  `released/<rev>/build/<process>/<model>/`, a CNC machine's programs in
+  `released/<rev>/cam/<model>/`, and `released/CURRENT` names the revision
+  to run. Never send a machine a file from `wip/` or from a revision
+  marked `OBSOLETE`.
 
 ```
 <root>/
