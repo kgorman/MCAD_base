@@ -57,14 +57,14 @@ class McadTreeTest(unittest.TestCase):
         lines = [f"{mt.file_digest(rev / name)}  {name}\n" for name in sorted(mt.revision_files(rev))]
         (rev / "SHA256SUMS").write_text("".join(lines))
 
-    def make_build(self, design, name="2026-09-27_p1s-01_b0173", nonconformance=None, **build):
-        path = design / "builds" / name
+    def make_job(self, design, name="2026-09-27_p1s-01_b0173", nonconformance=None, **job):
+        path = design / "jobs" / name
         path.mkdir(parents=True)
         data = {"revision": "rev-a", "machine_model": "bambu-p1s",
-                "result": "accepted", "quantity": {"built": 4, "accepted": 4},
+                "result": "accepted", "quantity": {"made": 4, "accepted": 4},
                 "inspection": {"inspected_by": "qc@example.com"}, "accepted_by": "qc@example.com"}
-        data.update(build)
-        (path / "build.json").write_text(json.dumps(data))
+        data.update(job)
+        (path / "job.json").write_text(json.dumps(data))
         if nonconformance is not None:
             (path / "nonconformance.json").write_text(json.dumps(nonconformance))
         return path
@@ -117,7 +117,7 @@ class McadTreeTest(unittest.TestCase):
         design = self.make_design()
         self.make_revision(design)
         (design / "Photo of First Print.jpg").write_text("")   # cloud and human names are free
-        self.make_build(design)
+        self.make_job(design)
         (self.root / "Kenny's Hub" / "Bike" / ".DS_Store").write_text("")
         self.assertEqual(mt.check_tree(self.root), ([], []))
 
@@ -267,13 +267,13 @@ class McadTreeTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("does not match its checksum (cad/bm-0042.step)", problems[0])
 
-    def test_check_flags_builds_that_do_not_say_what_ran(self):
+    def test_check_flags_jobs_that_do_not_say_what_ran(self):
         mt.init_tree(self.root, out=quiet)
         design = self.make_design()
         self.make_revision(design)
-        self.make_build(design, "2026-09-27_no-revision", revision=None)
-        self.make_build(design, "2026-09-28_wrong-revision", revision="rev-z")
-        self.make_build(design, "2026-09-29_no-model", machine_model=None)
+        self.make_job(design, "2026-09-27_no-revision", revision=None)
+        self.make_job(design, "2026-09-28_wrong-revision", revision="rev-z")
+        self.make_job(design, "2026-09-29_no-model", machine_model=None)
         problems, _ = mt.check_tree(self.root)
         text = "\n".join(problems)
         self.assertIn("does not name the revision it ran", text)
@@ -281,44 +281,44 @@ class McadTreeTest(unittest.TestCase):
         self.assertIn("does not name the machine model", text)
         self.assertEqual(len(problems), 3)
 
-    def test_check_treats_first_build_on_an_unproven_model_as_first_article(self):
+    def test_check_treats_first_job_on_an_unproven_model_as_first_article(self):
         mt.init_tree(self.root, out=quiet)
         design = self.make_design()
         self.make_revision(design)
-        self.make_build(design, "2026-10-01_mk4-01", machine_model="prusa-mk4", result="pending")
+        self.make_job(design, "2026-10-01_mk4-01", machine_model="prusa-mk4", result="pending")
         problems, notes = mt.check_tree(self.root)
         self.assertEqual(problems, [])
         self.assertEqual(len(notes), 1)
         self.assertIn("first-article inspection, rev-a is not proven on prusa-mk4", notes[0])
 
         # Accepted with no inspection record: the model is not proven by a signature alone.
-        unsigned = self.make_build(design, "2026-10-02_mk4-01", machine_model="prusa-mk4")
+        unsigned = self.make_job(design, "2026-10-02_mk4-01", machine_model="prusa-mk4")
         problems, _ = mt.check_tree(self.root)
         self.assertEqual(len(problems), 1)
-        self.assertIn("first build of rev-a on prusa-mk4 was accepted without an inspection record", problems[0])
+        self.assertIn("first job of rev-a on prusa-mk4 was accepted without an inspection record", problems[0])
 
-        # With the record it passes, and later builds on that model need nothing extra.
+        # With the record it passes, and later jobs on that model need nothing extra.
         (unsigned / "inspection.pdf").write_text("")
-        data = json.loads((unsigned / "build.json").read_text())
+        data = json.loads((unsigned / "job.json").read_text())
         data["inspection"]["record"] = "inspection.pdf"
-        (unsigned / "build.json").write_text(json.dumps(data))
-        self.make_build(design, "2026-10-03_mk4-02", machine_model="prusa-mk4")
+        (unsigned / "job.json").write_text(json.dumps(data))
+        self.make_job(design, "2026-10-03_mk4-02", machine_model="prusa-mk4")
         problems, notes = mt.check_tree(self.root)
         self.assertEqual(problems, [])
-        self.assertEqual(len(notes), 1)   # only the earlier pending build
+        self.assertEqual(len(notes), 1)   # only the earlier pending job
 
-    def test_check_flags_builds_without_acceptance(self):
+    def test_check_flags_jobs_without_acceptance(self):
         mt.init_tree(self.root, out=quiet)
         design = self.make_design()
         self.make_revision(design)
-        (design / "builds" / "2026-09-27_no-record").mkdir(parents=True)
-        self.make_build(design, "2026-09-28_bad-result", result="ok")
-        self.make_build(design, "2026-09-29_unsigned", inspection={"record": "inspection.pdf"}, accepted_by=None)
-        self.make_build(design, "2026-09-30_pending", result="pending")
+        (design / "jobs" / "2026-09-27_no-record").mkdir(parents=True)
+        self.make_job(design, "2026-09-28_bad-result", result="ok")
+        self.make_job(design, "2026-09-29_unsigned", inspection={"record": "inspection.pdf"}, accepted_by=None)
+        self.make_job(design, "2026-09-30_pending", result="pending")
         problems, notes = mt.check_tree(self.root)
         text = "\n".join(problems)
-        self.assertIn("build has no build.json", text)
-        self.assertIn("build result is 'ok'", text)
+        self.assertIn("job has no job.json", text)
+        self.assertIn("job result is 'ok'", text)
         self.assertIn("no inspection.inspected_by", text)
         self.assertIn("inspection record that is not there", text)
         self.assertIn("no accepted_by", text)
@@ -330,8 +330,8 @@ class McadTreeTest(unittest.TestCase):
         mt.init_tree(self.root, out=quiet)
         design = self.make_design()
         self.make_revision(design)
-        self.make_build(design, "2026-09-27_failed", result="rejected")
-        self.make_build(design, "2026-09-28_two-of-four", quantity={"built": 4, "accepted": 2},
+        self.make_job(design, "2026-09-27_failed", result="rejected")
+        self.make_job(design, "2026-09-28_two-of-four", quantity={"made": 4, "accepted": 2},
                         nonconformance={"description": "Layer shift at 14 mm", "disposition": "bin"})
         problems, _ = mt.check_tree(self.root)
         text = "\n".join(problems)
@@ -340,7 +340,7 @@ class McadTreeTest(unittest.TestCase):
         self.assertIn("no decided_by", text)
         self.assertEqual(len(problems), 3)
 
-        self.make_build(design, "2026-09-29_scrapped", result="rejected", nonconformance={
+        self.make_job(design, "2026-09-29_scrapped", result="rejected", nonconformance={
             "description": "Warped off the bed", "disposition": "scrap", "decided_by": "qc@example.com"})
         problems, _ = mt.check_tree(self.root)
         self.assertEqual(len(problems), 3)  # the complete record adds none
@@ -420,19 +420,19 @@ class McadTreeTest(unittest.TestCase):
         mt.init_tree(self.root, out=quiet)
         design = self.make_design()
         rev = self.make_revision(design)        # its manifest states no schema: read as schema 2
-        build = self.make_build(design)
+        job = self.make_job(design)
         self.assertEqual(mt.check_tree(self.root)[0], [])
 
-        self.set_record_schema(build / "build.json", 2)
+        self.set_record_schema(job / "job.json", 2)
         self.assertEqual(mt.check_tree(self.root)[0], [])
 
-        self.set_record_schema(build / "build.json", 9)
+        self.set_record_schema(job / "job.json", 9)
         self.set_record_schema(rev / "manifest.json", 9)
         self.freeze(rev)
         problems = mt.check_tree(self.root)[0]
         self.assertEqual(len(problems), 2, problems)
         self.assertTrue(any("manifest.json is at schema 9" in p for p in problems), problems)
-        self.assertTrue(any("build.json is at schema 9" in p for p in problems), problems)
+        self.assertTrue(any("job.json is at schema 9" in p for p in problems), problems)
 
     def test_upgrade_has_nothing_to_do_on_a_current_store(self):
         mt.init_tree(self.root, out=quiet)

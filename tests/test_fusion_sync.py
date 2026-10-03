@@ -214,6 +214,16 @@ class SyncEngineTests(unittest.TestCase):
         self.assertEqual(manifest["items"]["item_design"]["version_number"], 3)
         self.assertEqual(manifest["items"]["item_design"]["dir"], "Kenny's Hub/Shop_Projects/Bench Vise")
 
+    def test_every_design_gets_empty_released_and_jobs_folders(self):
+        self.run_sync()
+        for area in ("released", "jobs"):
+            self.assertTrue((self.design / area).is_dir())
+            self.assertEqual(list((self.design / area).iterdir()), [])
+        (self.design / "jobs").rmdir()
+        self.run_sync()                                         # an up-to-date design gets them back
+        self.assertTrue((self.design / "jobs").is_dir())
+        self.assertFalse((self.root / "Kenny's Hub" / "released").exists())   # only inside designs
+
     def test_design_json_and_history(self):
         self.run_sync()
         info = json.loads((self.design / "design.json").read_text())
@@ -249,7 +259,7 @@ class SyncEngineTests(unittest.TestCase):
         self.api.design_version = "urn:v:design?version=4"
         self.run_sync(formats=("native", "step"))
         self.assertEqual(sorted(p.name for p in self.design.iterdir()),
-                         ["design.json", "history.jsonl", "photo.jpg", "released", "wip"])
+                         ["design.json", "history.jsonl", "jobs", "photo.jpg", "released", "wip"])
         self.assertEqual((self.design / "released" / "rev-a" / "SHA256SUMS").read_text(), "frozen")
         self.assertEqual((self.design / "photo.jpg").read_text(), "loose")
 

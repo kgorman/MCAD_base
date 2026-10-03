@@ -129,7 +129,9 @@ Or in the foreground: `./fusion_sync.py watch --interval 900`.
    directly from their storage object via a signed S3 URL.
 5. **Write**: download to a temp file, atomically rename into place, update the manifest.
    When a design's version changes, the previous local copy moves to
-   `wip/_versions/` in the design's folder.
+   `wip/_versions/` in the design's folder. Each design folder also gets an
+   empty `released/` and `jobs/`, made once and never written to again, so
+   anyone browsing the store sees where releases and job records go.
 
 Rate limits and transient errors get exponential backoff with `Retry-After` honored.
 

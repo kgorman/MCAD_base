@@ -4,7 +4,7 @@ mcad_tree.py - set up and check an MCAD_base file store.
 
 The store is one folder per design, anywhere below the root. Everything about
 a design lands in its folder: working files in wip/, frozen revisions in
-released/, records of what actually ran in builds/, and any loose material
+released/, records of what actually ran in jobs/, and any loose material
 beside them. The layout and its rules are in docs/CANONICAL_TREE.md, which is
 copied into the store as SCHEMA.md.
 
@@ -60,8 +60,8 @@ DESIGN_FILE = "design.json"
 HISTORY_FILE = "history.jsonl"
 WIP_DIRNAME = "wip"
 RELEASED_DIRNAME = "released"
-BUILDS_DIRNAME = "builds"
-RESERVED_DIRNAMES = (WIP_DIRNAME, RELEASED_DIRNAME, BUILDS_DIRNAME)
+JOBS_DIRNAME = "jobs"
+RESERVED_DIRNAMES = (WIP_DIRNAME, RELEASED_DIRNAME, JOBS_DIRNAME)
 CURRENT_FILE = "CURRENT"
 DELETED_MARKER = "DELETED_IN_CLOUD"
 MANIFEST_FILE = "manifest.json"
@@ -73,9 +73,9 @@ BUILD_DIRNAME = "build"
 CAM_DIRNAME = "cam"
 PROFILE_FILE = "profile.json"
 GCODE_SUFFIXES = (".gcode", ".bgcode", ".gco")
-BUILD_FILE = "build.json"
+JOB_FILE = "job.json"
 NONCONFORMANCE_FILE = "nonconformance.json"
-BUILD_RESULTS = ("pending", "accepted", "rejected")
+JOB_RESULTS = ("pending", "accepted", "rejected")
 DISPOSITIONS = ("scrap", "rework", "use-as-is", "return")
 
 # At the store root, beside the hubs.
@@ -92,15 +92,15 @@ Shop CAD file store, laid out per SCHEMA.md (schema version {schema}).
 
 One folder per design, anywhere below this folder. Arrange the folders above
 a design however the shop likes. A folder is a design when it holds `wip/`,
-`released/`, or `builds/`. Inside a design folder:
+`released/`, or `jobs/`. Inside a design folder:
 
 | Name | What it is | Who writes |
 |---|---|---|
 | `wip/` | work in progress: the files being worked on | you; a sync tool replaces only the files it wrote |
 | `released/` | frozen revisions, one folder per revision | whoever releases; nothing changes after sign-off |
-| `builds/` | records of what actually ran, who inspected and accepted it, and what was rejected | operators, shop software |
+| `jobs/` | records of what actually ran, who inspected and accepted it, and what was rejected | operators, shop software |
 | `design.json` | optional: part number, description; for a synced design, its id in the CAD system | you; a sync tool keeps its own keys |
-| `history.jsonl` | ledger: released, built, synced | appended to, never rewritten |
+| `history.jsonl` | ledger: released, ran, synced | appended to, never rewritten |
 | anything else | photos, loose STLs, notes | you |
 
 Working files and releases are different things. `wip/` changes whenever the
@@ -245,11 +245,11 @@ def holds_designs(path: Path) -> bool:
 
 def find_designs(root: Path) -> Iterator[Path]:
     """Every design folder: one the sync tool made (it holds design.json), or one made by hand (it
-    holds wip/, released/, or builds/). Design folders do not nest, so the walk stops there."""
+    holds wip/, released/, or jobs/). Design folders do not nest, so the walk stops there."""
     for dirpath, dirnames, filenames in os.walk(root):
         at_root = Path(dirpath) == root
         reserved = [d for d in dirnames if d in RESERVED_DIRNAMES]
-        # A cloud folder that happens to be called wip/ or builds/ holds designs; it is not one.
+        # A cloud folder that happens to be called wip/ or jobs/ holds designs; it is not one.
         by_hand = not at_root and reserved and not any(holds_designs(Path(dirpath) / d) for d in reserved)
         if DESIGN_FILE in filenames or by_hand:
             dirnames[:] = []
@@ -441,70 +441,70 @@ def check_released(root: Path, design: Path, problems: List[str],
         problems.append(f"{CURRENT_FILE} names '{current}', which is not a revision: {rel(released)}")
 
 
-def check_builds(root: Path, design: Path, problems: List[str], notes: List[str]) -> None:
-    """Every build names what ran and on what, is inspected and accepted by someone, and anything
-    rejected has a disposition. The first build on a model the revision is not proven on is a first
+def check_jobs(root: Path, design: Path, problems: List[str], notes: List[str]) -> None:
+    """Every job names what ran and on what, is inspected and accepted by someone, and anything
+    rejected has a disposition. The first job on a model the revision is not proven on is a first
     article: it needs an inspection record before that model counts as proven."""
-    builds = design / BUILDS_DIRNAME
-    if not builds.is_dir():
+    jobs = design / JOBS_DIRNAME
+    if not jobs.is_dir():
         return
     proven = proven_models(design)
-    # Folder names start with the date, so sorted order is the order the builds ran.
-    for entry in sorted(os.listdir(builds)):
-        path = builds / entry
+    # Folder names start with the date, so sorted order is the order the jobs ran.
+    for entry in sorted(os.listdir(jobs)):
+        path = jobs / entry
         if ignored(entry) or not path.is_dir():
             continue
         rel = store_path(path, root)
         try:
-            build = read_json(path / BUILD_FILE)
+            job = read_json(path / JOB_FILE)
             nonconformance = read_json(path / NONCONFORMANCE_FILE)
         except TreeError as exc:
             problems.append(str(exc))
             continue
-        if build is None:
-            problems.append(f"build has no {BUILD_FILE}: {rel}")
+        if job is None:
+            problems.append(f"job has no {JOB_FILE}: {rel}")
             continue
-        if record_schema(build, BUILD_FILE, rel, problems) is None:
+        if record_schema(job, JOB_FILE, rel, problems) is None:
             continue
         revision, model = (v if isinstance(v, str) else None
-                           for v in (build.get("revision"), build.get("machine_model")))
+                           for v in (job.get("revision"), job.get("machine_model")))
         if not revision:
-            problems.append(f"build does not name the revision it ran: {rel}")
+            problems.append(f"job does not name the revision it ran: {rel}")
         elif revision not in proven:
-            problems.append(f"build names '{revision}', which is not a revision: {rel}")
+            problems.append(f"job names '{revision}', which is not a revision: {rel}")
         if not model:
-            problems.append(f"build does not name the machine model it ran on: {rel}")
+            problems.append(f"job does not name the machine model it ran on: {rel}")
         first_article = revision in proven and bool(model) and model not in proven[revision]
-        result = build.get("result")
-        if result not in BUILD_RESULTS:
-            problems.append(f"build result is '{result}', expected one of {', '.join(BUILD_RESULTS)}: {rel}")
+        result = job.get("result")
+        if result not in JOB_RESULTS:
+            problems.append(f"job result is '{result}', expected one of {', '.join(JOB_RESULTS)}: {rel}")
             continue
         if result == "pending":
             if first_article:
-                notes.append(f"build is awaiting first-article inspection, {revision} is not proven on {model}: {rel}")
+                notes.append(f"job is awaiting first-article inspection, {revision} is not proven on {model}: {rel}")
             else:
-                notes.append(f"build is awaiting inspection: {rel}")
+                notes.append(f"job is awaiting inspection: {rel}")
             continue
         if result == "accepted":
-            inspection = section(build, "inspection")
+            inspection = section(job, "inspection")
             if not inspection.get("inspected_by"):
-                problems.append(f"accepted build has no inspection.inspected_by: {rel}")
+                problems.append(f"accepted job has no inspection.inspected_by: {rel}")
             record = inspection.get("record")
             if record and not (path / record).exists():
-                problems.append(f"build cites an inspection record that is not there ({record}): {rel}")
-            if not build.get("accepted_by"):
-                problems.append(f"accepted build has no accepted_by: {rel}")
+                problems.append(f"job cites an inspection record that is not there ({record}): {rel}")
+            if not job.get("accepted_by"):
+                problems.append(f"accepted job has no accepted_by: {rel}")
             if first_article:
                 if not record:
-                    problems.append(f"first build of {revision} on {model} was accepted "
+                    problems.append(f"first job of {revision} on {model} was accepted "
                                     f"without an inspection record: {rel}")
                 proven[revision].add(model)
-        quantity = section(build, "quantity")
-        built, accepted = quantity.get("built"), quantity.get("accepted")
-        short = isinstance(built, int) and isinstance(accepted, int) and accepted < built
+        quantity = section(job, "quantity")
+        made, accepted = quantity.get("made"), quantity.get("accepted")
+        short = isinstance(made, int) and isinstance(accepted, int) and accepted < made
         if result == "rejected" or short:
             if nonconformance is None:
-                problems.append(f"build has rejected parts but no {NONCONFORMANCE_FILE}: {rel}")
+                problems.append(f"job has rejected parts but no {NONCONFORMANCE_FILE}: {rel}")
                 continue
             if not nonconformance.get("description"):
                 problems.append(f"{NONCONFORMANCE_FILE} has no description: {rel}")
@@ -564,7 +564,7 @@ def check_tree(root: Path, hashes: bool = False) -> Tuple[List[str], List[str]]:
         if (design / DELETED_MARKER).exists():
             notes.append(f"deleted in the cloud, kept here: {rel}")
         check_released(root, design, problems, info.get("kind") or "design", hashes)
-        check_builds(root, design, problems, notes)
+        check_jobs(root, design, problems, notes)
 
     return problems, notes
 

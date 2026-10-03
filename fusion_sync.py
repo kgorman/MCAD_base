@@ -13,7 +13,7 @@ were uploaded to a project (PDFs, STLs, DXFs, ...) are downloaded as-is.
 
 Every cloud item becomes a folder. Sync writes only wip/, design.json,
 history.jsonl, and the DELETED_IN_CLOUD marker inside it; everything else in
-the folder (released/, builds/, loose files) is left alone. A rename or move
+the folder (released/, jobs/, loose files) is left alone. A rename or move
 in the cloud moves the folder on disk. A delete in the cloud marks the folder
 and removes nothing. See docs/CANONICAL_TREE.md.
 
@@ -77,9 +77,10 @@ MANIFEST_NAME = "manifest.json"
 VERSIONS_DIRNAME = "_versions"
 
 # Every cloud item gets its own folder. Sync writes only these inside it; the
-# rest of the folder (released/, builds/, loose files) belongs to other tools
+# rest of the folder (released/, jobs/, loose files) belongs to other tools
 # and to people.
 WIP_DIRNAME = "wip"
+AREA_DIRNAMES = ("released", "jobs")  # made empty in every design folder; other writers fill them
 DESIGN_FILE = "design.json"
 HISTORY_FILE = "history.jsonl"
 DELETED_MARKER = "DELETED_IN_CLOUD"
@@ -598,6 +599,13 @@ class Syncer:
         self.manifest["updated_at"] = now_stamp()
         write_json(self.manifest_path, self.manifest)
 
+    def _make_areas(self, item_dir: Path) -> None:
+        """The empty released/ and jobs/ folders, so a design shows where its records go."""
+        if self.dry_run or not item_dir.is_dir():
+            return
+        for name in AREA_DIRNAMES:
+            (item_dir / name).mkdir(exist_ok=True)
+
     def _append_history(self, item_dir: Path, event: Dict[str, Any]) -> None:
         with (item_dir / HISTORY_FILE).open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({"at": now_stamp(), **event}, sort_keys=True) + "\n")
@@ -805,6 +813,7 @@ class Syncer:
 
         if not todo:
             self.stats.skipped += 1
+            self._make_areas(item_dir)
             return
 
         label = f"{rel_dir}/{display} (v{version_no})"
@@ -874,6 +883,7 @@ class Syncer:
                 record["export_failed"] = export_failed
             self.manifest["items"][item["id"]] = record
             self._write_design_info(item_dir, item["id"], ctx, record)
+            self._make_areas(item_dir)
             if fetched or failed_now:
                 event = {"event": "synced", "version_number": version_no, "version_id": version_id, "files": sorted(fetched)}
                 if export_failed:

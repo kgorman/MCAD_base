@@ -21,7 +21,7 @@ Three sources, in order of authority:
 - A **design** is one folder somewhere below the store root. Everything
   about the design is inside that folder. Design folders do not nest.
 - A folder is a design when it holds `design.json`, or when it holds
-  `wip/`, `released/`, or `builds/`. The folders above a design can have
+  `wip/`, `released/`, or `jobs/`. The folders above a design can have
   any names and any depth.
 - **The file system is the database.** Every record is a plain file in the
   design's folder. There is no server, no SQLite file, no index that is a
@@ -50,7 +50,7 @@ Three sources, in order of authority:
       CURRENT          one line: the current revision, e.g. rev-b
       rev-a/           frozen once SHA256SUMS is written
       rev-b/
-    builds/
+    jobs/
       <date>_<machine>_<job>/
     (anything else)    belongs to people
   _index/parts.csv     generated
@@ -69,9 +69,9 @@ Three sources, in order of authority:
 
 | Kind of tool | May write |
 |---|---|
-| Sync tool (fills the tree from a CAD system or cloud) | its own exports in `wip/`; its own keys in `design.json`; events in `history.jsonl` |
+| Sync tool (fills the tree from a CAD system or cloud) | its own exports in `wip/`; its own keys in `design.json`; events in `history.jsonl`; the empty `released/` and `jobs/` folders |
 | Release tool | `released/<rev>/`; `released/CURRENT`; the `OBSOLETE` marker in a superseded revision; events in `history.jsonl`; copies in `_outbox/<machine>/` |
-| Print farm or shop-floor software | folders under `builds/` |
+| Print farm or shop-floor software | folders under `jobs/` |
 | Read-only tool (viewer, report, search) | nothing inside a design folder |
 
 ## Rules you must not break
@@ -80,7 +80,7 @@ Three sources, in order of authority:
   exists, do not add, edit, rename, or delete anything in that folder. A
   change is a new revision folder. The one exception is the `OBSOLETE`
   marker file.
-- **Never delete records.** Not a design, a revision, or a build. Mark
+- **Never delete records.** Not a design, a revision, or a job. Mark
   them instead: `OBSOLETE` in a superseded revision, `DELETED_IN_CLOUD` in
   a design whose source is gone.
 - **Leave alone what you did not write.** In `wip/`, replace only files
@@ -96,7 +96,7 @@ Three sources, in order of authority:
 - **Do not change the layout to suit your product.** The product adapts to
   the layout. If the layout cannot hold something you need, open an issue
   on the MCAD_base repository; do not invent folders or rename
-  `wip/`, `released/`, or `builds/`.
+  `wip/`, `released/`, or `jobs/`.
 - **Cover printed and machined parts.** Printer files go in
   `build/<process>/<model>/`, machine tool programs in `cam/<model>/`.
 
@@ -129,24 +129,24 @@ Write code that satisfies every line here.
 - When any revision exists, `released/CURRENT` exists and names one of
   them.
 
-**A build, `builds/<date>_<machine>_<job>/`**
+**A job, `jobs/<date>_<machine>_<job>/`**
 
-- Start the folder name with the date (`2026-09-27_...`). Builds are read
-  in name order, and that order decides which build was first on a
+- Start the folder name with the date (`2026-09-27_...`). Jobs are read
+  in name order, and that order decides which job was first on a
   machine model.
-- It holds `build.json` with `revision` (an existing revision folder) and
+- It holds `job.json` with `revision` (an existing revision folder) and
   `machine_model`.
 - `result` is `pending`, `accepted`, or `rejected`.
-- An accepted build has `inspection.inspected_by` and `accepted_by`.
-  `inspection.record`, if given, is a file in the build folder.
-- The first accepted build on a model that is not in the revision's
+- An accepted job has `inspection.inspected_by` and `accepted_by`.
+  `inspection.record`, if given, is a file in the job folder.
+- The first accepted job on a model that is not in the revision's
   `proven_on` must have `inspection.record`.
-- A rejected build, or one where `quantity.accepted` is less than
-  `quantity.built`, has `nonconformance.json` with `description`,
+- A rejected job, or one where `quantity.accepted` is less than
+  `quantity.made`, has `nonconformance.json` with `description`,
   `disposition` (`scrap`, `rework`, `use-as-is`, or `return`), and
   `decided_by`.
-- Copy the exact file that ran into the build folder and name it in
-  `build.json` as `file`.
+- Copy the exact file that ran into the job folder and name it in
+  `job.json` as `file`.
 
 **A design**
 
@@ -159,9 +159,9 @@ Write code that satisfies every line here.
 
 - The store's schema version is `schema` in `.mcad-tree.json`. Write
   `"schema": <that number>` into every `design.json`, `manifest.json`,
-  `build.json`, and `nonconformance.json` you create.
+  `job.json`, and `nonconformance.json` you create.
 - A store can hold records at an older schema: frozen revisions and
-  completed builds are never rewritten when a store is upgraded. Read each
+  completed jobs are never rewritten when a store is upgraded. Read each
   record by the `schema` it states. A record that states none is schema 2.
 - Do not rewrite an old record to bring it up to date. Do not write an
   upgrade of your own; `mcad_tree.py upgrade` is the only thing that

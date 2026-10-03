@@ -3,14 +3,14 @@
 One root on a NAS or shared drive, and one folder per design. Everything
 about a design lands in that design's folder: the CAD, the released
 revisions, the G-code and NC programs the machines run, and the record of
-what was built. It serves printed and machined parts alike. Schema
+what was made. It serves printed and machined parts alike. Schema
 version 2.
 
 The layout does not set how a shop works. It says where things end up, and
 `check` reports where a store differs from it.
 
 The project, and inside it the design, is the container. State lives inside
-the container: work in progress, released revisions, and build records are
+the container: work in progress, released revisions, and job records are
 subfolders of the design, not separate trees.
 
 ## Rules
@@ -35,11 +35,11 @@ subfolders of the design, not separate trees.
    - `released/` is written only at release, by a person or by a tool.
      Append-only; a revision folder is never modified after its
      `SHA256SUMS` is written.
-   - `builds/` holds records of what actually ran. Append-only.
+   - `jobs/` holds records of what actually ran. Append-only.
 
    Anything else in the design folder is yours: photos, loose STLs, notes.
 5. **Every sign-off names a person.** A revision's manifest names who
-   reviewed it and who approved it. A build names who inspected it and who
+   reviewed it and who approved it. A job names who inspected it and who
    accepted it. Rejected parts get a nonconformance record naming who
    decided what happened to them. One person may hold several of these
    roles; the name is still written down each time.
@@ -82,7 +82,7 @@ subfolders of the design, not separate trees.
     <folder>/...                            <- for a Fusion sync: <hub>/<project>/<folder>/
         <design>/                           <- ONE FOLDER PER DESIGN, e.g. Headset Spacers/
           design.json                       <- optional: part number, description; a synced design's id
-          history.jsonl                     <- ledger: synced, moved, released, built
+          history.jsonl                     <- ledger: synced, moved, released, ran
           DELETED_IN_CLOUD                  <- marker, only if the design is gone from the cloud
 
           wip/                              <- WORK IN PROGRESS. The working folder for every design.
@@ -125,10 +125,10 @@ subfolders of the design, not separate trees.
             rev-b/
               ...
 
-          builds/                           <- WHAT ACTUALLY RAN. Append-only.
+          jobs/                             <- WHAT ACTUALLY RAN. Append-only.
             2026-09-27_p1s-01_b0173/
               bm-0042_rev-a.gcode           <- exact file that ran
-              build.json                    <- printer, material lot, operator, inspection, who accepted it
+              job.json                      <- printer, material lot, operator, inspection, who accepted it
               inspection.pdf                <- the inspection record, if there is a separate one
               nonconformance.json           <- only if parts were rejected: what failed, disposition, who decided
 
@@ -156,9 +156,11 @@ Two things particular to a Fusion sync:
 ## Starting a design by hand
 
 No tool is needed. Make a folder for the design anywhere below the store
-root, make `wip/` inside it, and work there with whatever CAD system the
-shop uses. The folder is a design as soon as it holds `wip/`, `released/`,
-or `builds/`, and `check`, `verify`, and `index` treat it like any other.
+root, make `wip/`, `released/`, and `jobs/` inside it, and work in `wip/`
+with whatever CAD system the shop uses. The folder is a design as soon as
+it holds any one of the three, and `check`, `verify`, and `index` treat it
+like any other. The empty `released/` and `jobs/` say where things go; a
+sync tool makes them too.
 `design.json` is optional for such a design; add one to give it a part
 number and description.
 
@@ -255,8 +257,8 @@ Do not run a revision that holds an `OBSOLETE` file.
    one machine. At each release, copy that machine's programs from the
    revision into it, replacing the old ones. Nothing is edited there.
 
-**Afterwards.** Record the run in `builds/<date>_<machine>_<job>/`, with
-a copy of the exact file that ran and a `build.json`. That ties the
+**Afterwards.** Record the run in `jobs/<date>_<machine>_<job>/`, with
+a copy of the exact file that ran and a `job.json`. That ties the
 physical part to the revision.
 
 ## design.json
@@ -299,7 +301,8 @@ record: what happened to it and when.
 
 The Fusion sync writes `synced`, `moved`, `deleted_in_cloud`, and
 `restored_in_cloud`. A release adds `released`, and `obsoleted` for the
-revision it replaces, each with a `revision` field.
+revision it replaces, each with a `revision` field. A job adds `ran`, with
+a `job` field naming its folder.
 
 ## manifest.json for a release revision
 
@@ -388,10 +391,10 @@ infill, or any other setting is a new revision.
 `process.proven_on` lists the machine models the revision held a program
 for when it was released. Running the revision on another model does not
 need a new revision: re-target the saved slicer project to that model, and
-the build record keeps the exact program that ran. The first build on a
+the job record keeps the exact program that ran. The first job on a
 model the revision is not proven on is a first article. It needs an
 inspection record before it can be accepted, and once it is accepted that
-model counts as proven for the builds that follow.
+model counts as proven for the jobs that follow.
 
 Slices made while getting a print right are not records. Until release
 they are loose material in the design folder, with no rules. The files
@@ -400,13 +403,13 @@ that worked are copied into the revision when it is released.
 Review records live in `reviews/` and are frozen with the revision, so the
 review happens before the release, not after. For a revision that changes
 a released design, the design review also covers the effect of the change
-on parts already built or in stock.
+on parts already made or in stock.
 
-## build.json for a build
+## job.json for a job
 
-One folder per build under `builds/`, named `<date>_<machine>_<job>`. The
+One folder per job under `jobs/`, named `<date>_<machine>_<job>`. The
 folder is created when the job runs, with `result` set to `pending`.
-`build.json` is completed once at inspection and not changed after.
+`job.json` is completed once at inspection and not changed after.
 
 ```json
 {
@@ -420,7 +423,7 @@ folder is created when the job runs, with `result` set to `pending`.
   "operator": "operator@example.com",
   "started_at": "2026-09-27T08:02:00-05:00",
   "finished_at": "2026-09-27T09:26:00-05:00",
-  "quantity": { "built": 4, "accepted": 4 },
+  "quantity": { "made": 4, "accepted": 4 },
   "result": "accepted",
   "inspection": {
     "inspected_by": "qc@example.com",
@@ -433,13 +436,13 @@ folder is created when the job runs, with `result` set to `pending`.
 }
 ```
 
-`revision` and `machine_model` are required: a build says what ran and on
+`revision` and `machine_model` are required: a job says what ran and on
 what. `machine` is the individual machine. `result` is `pending`,
 `accepted`, or `rejected`.
 
 ## nonconformance.json for rejected parts
 
-Written beside `build.json` whenever anything built was not accepted.
+Written beside `job.json` whenever anything made was not accepted.
 
 ```json
 {
@@ -481,21 +484,21 @@ In a revision:
 - a name that breaks the naming rule;
 - with `verify`: a file whose contents no longer match its checksum.
 
-In a build:
+In a job:
 
-- no `build.json`, or one that does not name its revision and machine
+- no `job.json`, or one that does not name its revision and machine
   model, or names a revision that does not exist;
-- an accepted build with no inspector or no acceptor, or an inspection
+- an accepted job with no inspector or no acceptor, or an inspection
   record it cites that is not there;
-- a first build on a model the revision is not proven on, accepted
+- a first job on a model the revision is not proven on, accepted
   without an inspection record;
 - rejected parts with no `nonconformance.json`, or one without a
   description, a disposition, and who decided.
 
-In either: a `manifest.json` or `build.json` at a schema this version of
+In either: a `manifest.json` or `job.json` at a schema this version of
 the tool does not know.
 
-A build still awaiting inspection is a note, not a problem.
+A job still awaiting inspection is a note, not a problem.
 
 What it cannot find: an artifact your shop expects that neither the
 manifest nor this schema requires. A revision with no drawing passes
@@ -508,9 +511,10 @@ unless the manifest lists one.
 | `<design>/wip/` | people; a sync tool for its own exports | working files; sync replaces only the files it wrote | people, backup, whoever releases |
 | `<design>/design.json` | people; a sync tool (its keys) | updated | every tool |
 | `<design>/history.jsonl` | a sync tool; whoever releases | append-only | auditors |
+| `<design>/released/` and `<design>/jobs/`, the empty folders | people; a sync tool | made once | everyone |
 | `<design>/released/<rev>/` | whoever releases, a person or a tool | frozen after SHA256SUMS | everyone, machines, auditors |
 | `<design>/released/CURRENT` | whoever releases | replaced on each release | people, machines, scripts |
-| `<design>/builds/` | operator, inspector, shop software | append-only; `build.json` completed once at inspection | QC, traceability |
+| `<design>/jobs/` | operator, inspector, shop software | append-only; `job.json` completed once at inspection | QC, traceability |
 | `<design>/` anything else | people | free | people |
 | `_index/` | mcad_tree index | regenerated | people, scripts |
 | `_outbox/<machine>/` | whoever releases, copying from the revision | replaced on release | machines via a network share |
@@ -529,7 +533,7 @@ compatible" when all four of these hold.
      `design.json`, and events in `history.jsonl`;
    - a release tool writes `released/`, `CURRENT`, events in
      `history.jsonl`, and copies in `_outbox/`;
-   - farm or shop-floor software writes `builds/`;
+   - farm or shop-floor software writes `jobs/`;
    - a tool that only reads writes nothing inside a design folder.
 
    It leaves alone what it does not own: other files in `wip/`, keys it did
@@ -567,7 +571,7 @@ Two numbers, kept apart:
 
 - **The schema version** is the layout's. It is a whole number, stored in
   `.mcad-tree.json` at the root and in each record (`design.json`,
-  `manifest.json`, `build.json`, `nonconformance.json`). This document
+  `manifest.json`, `job.json`, `nonconformance.json`). This document
   describes schema 2.
 - **The tool version** is the version of `mcad_tree.py` and
   `fusion_sync.py`, shown by `--version` and tagged in the repository as
@@ -593,7 +597,7 @@ What happens when it changes:
   judges it by that version's rules. `upgrade` hashes every file in every
   frozen revision before and after, and refuses to mark the store if one
   changed.
-- A completed build record is not rewritten either, and is judged the same
+- A completed job record is not rewritten either, and is judged the same
   way.
 - A record that states no `schema` is read as schema 2.
 - A tool refuses a store at a schema it does not target. An older store
@@ -603,7 +607,7 @@ What happens when it changes:
 Change log:
 
 - **Schema 2**, current. One folder per design, holding `wip/`,
-  `released/`, and `builds/`. Sign-offs, build and nonconformance records,
+  `released/`, and `jobs/`. Sign-offs, job and nonconformance records,
   `proven_on`, and designs made by hand were added while the schema was
   still being settled and no store held released revisions, so the number
   did not change. From tool version 0.1.0 the rules above apply.
@@ -622,7 +626,7 @@ Change log:
   protection from unintended change; `OBSOLETE` markers for control of
   superseded records.
 - ISO 9001 8.3.5 design outputs and 8.5.2 traceability: `released/<rev>/`
-  holds the outputs; `builds/` ties a physical part to the revision and
+  holds the outputs; `jobs/` ties a physical part to the revision and
   the exact file that made it. One folder holds the whole chain.
 - ISO 9001 8.3.4 design controls and 8.3.6 design changes: `reviews/` in
   each revision holds the review, verification, and validation records;
@@ -631,10 +635,10 @@ Change log:
 - ISO 9001 8.5.1 controlled production and 8.5.6 production changes: the
   slicer project, settings, and program for each proven machine model are
   frozen in the revision; changing them is a new revision, and a new
-  machine model is admitted by a first-article build with an inspection
+  machine model is admitted by a first-article job with an inspection
   record.
-- ISO 9001 8.6 release of products: `build.json` records the inspection
-  and who accepted the build.
+- ISO 9001 8.6 release of products: `job.json` records the inspection
+  and who accepted the job.
 - ISO 9001 8.7 nonconforming outputs: `nonconformance.json` records what
   failed, the disposition, any concession, and who decided.
 - ISO 10007 configuration management: the design folder is the

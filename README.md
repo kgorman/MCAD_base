@@ -8,7 +8,7 @@ readable without these tools.
 
 Every design has one folder holding its working CAD files, its frozen
 released revisions, the G-code and NC programs its machines run, and the
-record of what was built from them. The layout works with any CAD or CAM
+record of what was made from them. The layout works with any CAD or CAM
 system, and printers and CNC machines take their files straight from a
 released revision.
 
@@ -38,6 +38,59 @@ mkdir -p "/path/to/store/Brackets/Motor Mount/wip"    # a design is just a folde
 
 Then save your CAD files into `wip/` and carry on working. On Windows the
 commands differ slightly; see [Windows](#windows).
+
+## The workflow
+
+A design goes around one loop, and every turn leaves files in its folder.
+
+1. **Design.** Work in `wip/`. Save as often as you like; nothing here is
+   a record. A Fusion sync fills `wip/` for you. See
+   [Start a design](#start-a-design).
+2. **Release.** When a version is good, copy it into `released/rev-a/`
+   with its drawings and the program for each machine model, write the
+   manifest naming who reviewed and approved it, and write the checksums.
+   The folder is frozen from then on, and `released/CURRENT` names it.
+   See [Release a revision](#release-a-revision).
+3. **Run.** A printer or CNC machine takes its file from the current
+   revision, never from `wip/`. See
+   [Get a release to a printer or CNC machine](#get-a-release-to-a-printer-or-cnc-machine).
+4. **Record.** Each run gets a folder under `jobs/` with a copy of the
+   exact file that ran and a `job.json` saying what, on which machine, who
+   inspected it, and whether it was accepted. See
+   [Record a job](#record-a-job).
+5. **Change.** When the design changes, keep working in `wip/`. When the
+   change is good, release `rev-b` the same way, point `CURRENT` at it,
+   and drop an `OBSOLETE` marker in `rev-a`. Nothing in `rev-a` is edited
+   or deleted; the jobs that ran it still point at it.
+6. **Check.** Run `check` whenever you like and `verify` on a schedule.
+   They report what is missing and change nothing. See
+   [Check and index](#check-and-index).
+
+After one turn of the loop a design looks like this:
+
+```
+Motor Mount/
+  design.json
+  history.jsonl                  synced, released, ran
+  wip/
+    motor-mount.f3d              the latest working version
+  released/
+    CURRENT                      "rev-a"
+    rev-a/
+      manifest.json
+      SHA256SUMS
+      cad/motor-mount.f3d
+      cad/motor-mount.step
+      build/fdm/bambu-p1s/motor-mount_rev-a.3mf
+  jobs/
+    2026-10-02_p1s-01_j0001/
+      motor-mount_rev-a.3mf      the exact file that ran
+      job.json
+```
+
+Three writers, three areas: you or a sync tool write `wip/`, whoever
+releases writes `released/`, whoever runs the machine writes `jobs/`.
+None of them touches the other two.
 
 ## Requirements
 
@@ -90,15 +143,15 @@ storage in the sync).
   <any folders>/.../<design>/
     wip/              work in progress: where you work
     released/         rev-a/, rev-b/, CURRENT; frozen once signed off
-    builds/           what actually ran
+    jobs/             what actually ran
     design.json       optional: part number, description
-    history.jsonl     ledger: released, built, synced, moved
+    history.jsonl     ledger: released, ran, synced, moved
     (anything else)   yours
   _index/parts.csv    generated: part number -> folder
   _outbox/<machine>/  flat copies for machines, only if needed
 ```
 
-A folder is a design as soon as it holds `wip/`, `released/`, or `builds/`.
+A folder is a design as soon as it holds `wip/`, `released/`, or `jobs/`.
 Arrange the folders above a design however the shop likes: by customer, by
 project, by product.
 
@@ -127,9 +180,15 @@ creates no design folders; you make those, or a sync tool does.
 
 ## Start a design
 
-Make a folder for the design anywhere below the store root, make `wip/`
-inside it, and work there with whatever CAD system the shop uses. No
-command is needed; `check`, `verify`, and `index` pick the folder up.
+Make a folder for the design anywhere below the store root, make `wip/`,
+`released/`, and `jobs/` inside it, and work in `wip/` with whatever CAD
+system the shop uses. No command is needed; `check`, `verify`, and `index`
+pick the folder up. The empty `released/` and `jobs/` show where releases
+and job records go.
+
+With a Fusion sync you make nothing: each design in the cloud gets its
+folder, its three subfolders, and its latest version in `wip/` on every
+run. See [Autodesk Fusion](#autodesk-fusion).
 
 Add a `design.json` to give the design a part number and a description.
 
@@ -170,9 +229,33 @@ Three ways to get the file to the machine:
   `_outbox/<machine>/` folder. Copy that machine's programs into it at
   each release and share only that folder with the machine.
 
-Afterwards, record the run under `builds/` with a copy of the exact file
-that ran. More in
+More in
 [docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#getting-a-release-to-a-machine).
+
+## Record a job
+
+A job is one run of one revision on one machine. It is recorded by hand,
+or by print farm or shop-floor software, the same way:
+
+1. Make `jobs/<date>_<machine>_<job>/` in the design folder, for example
+   `jobs/2026-10-02_p1s-01_j0001/`. The date first, so jobs sort in the
+   order they ran.
+2. Copy in the exact file that ran, from the revision folder.
+3. Write `job.json` naming the revision, the machine model, the machine,
+   the file, the operator, and the material lot, with `result` set to
+   `pending`.
+4. At inspection, complete it: how many were made and accepted, who
+   inspected, how, and who accepted. Set `result` to `accepted` or
+   `rejected`. It is not changed after that.
+5. If anything was rejected, write `nonconformance.json` beside it: what
+   was wrong, the disposition, and who decided.
+6. Add a line to `history.jsonl`:
+   `{"at": "...", "event": "ran", "job": "2026-10-02_p1s-01_j0001"}`.
+
+The first job on a machine model the revision is not yet proven on is a
+first article: it needs an inspection record before it can be accepted.
+The fields are in
+[docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#jobjson-for-a-job).
 
 ## Check and index
 
@@ -194,9 +277,9 @@ that ran. More in
   a revision that `SHA256SUMS` does not list;
 - a machine model the revision claims to be proven on with no G-code or
   NC program for it (a 3MF counts only if it has G-code inside);
-- a build that does not say what ran, has no inspector or acceptor, or has
+- a job that does not say what ran, has no inspector or acceptor, or has
   rejected parts with no disposition;
-- the first build on an unproven machine model accepted without an
+- the first job on an unproven machine model accepted without an
   inspection record;
 - names inside `released/` that break the naming rule (lowercase ASCII,
   digits, `-`, `_`, `.`, path under 200 characters). Names above the
@@ -262,7 +345,7 @@ the records a quality system needs:
 
 - **ISO 9001, quality management.** Every revision is identified and names
   who reviewed and approved it. Released revisions are frozen and
-  checksummed, so they are protected from unintended change. A build
+  checksummed, so they are protected from unintended change. A job
   record ties a physical part to the revision and the exact file that made
   it, and records the inspection, who accepted it, and what happened to
   any rejected parts.
@@ -304,7 +387,7 @@ appear in the tree.
 - Each design's latest cloud export is kept in its `wip/`. The sync
   replaces only the files it wrote and leaves everything else there alone.
 - Identity is the Fusion item id in `design.json`, not the path. A rename
-  or move in the cloud moves the folder, with its releases and builds.
+  or move in the cloud moves the folder, with its releases and jobs.
 - A delete in the cloud marks the folder and removes nothing.
 - Each design is kept in both of Fusion's formats: the `.f3d` as the cloud
   stores it, and a `.f3z` archive, which also carries the other designs an
