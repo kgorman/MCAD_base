@@ -365,6 +365,12 @@ reports a revision without them. They may name the same person as
 `released_by`. `review_record` is optional and, when given, must be a file
 in the revision folder.
 
+A shop may add keys of its own to `manifest.json`, `job.json`,
+`nonconformance.json`, and `design.json`: a customer, a purchase order, a
+material certificate. The tools read only the keys this document names
+and leave the rest alone. Keep shop keys under one key of the shop's own,
+such as `"acme": {...}`, so a later schema cannot collide with them.
+
 Every file in `files` must be in the revision folder. Each model in
 `process.proven_on` needs its program in `build/<process>/<model>/` or
 `cam/<model>/`.

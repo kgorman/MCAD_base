@@ -121,6 +121,18 @@ class McadTreeTest(unittest.TestCase):
         (self.root / "Kenny's Hub" / "Bike" / ".DS_Store").write_text("")
         self.assertEqual(mt.check_tree(self.root), ([], []))
 
+    def test_check_leaves_a_shops_own_keys_alone(self):
+        mt.init_tree(self.root, out=quiet)
+        design = self.make_design()
+        rev = self.make_revision(design)
+        manifest = json.loads((rev / "manifest.json").read_text())
+        manifest["customer"] = "Acme"
+        manifest["acme"] = {"po": "PO-4471", "material_cert": "cert-0912.pdf"}
+        (rev / "manifest.json").write_text(json.dumps(manifest))
+        self.freeze(rev)
+        self.make_job(design, acme={"traveler": "T-0173"}, customer="Acme")
+        self.assertEqual(mt.check_tree(self.root), ([], []))
+
     def test_check_flags_two_folders_claiming_one_fusion_item(self):
         mt.init_tree(self.root, out=quiet)
         self.make_design("Hub/Bike/A", item_id="same")
