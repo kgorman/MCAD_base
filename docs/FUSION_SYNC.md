@@ -79,6 +79,7 @@ Config lives in `~/.config/fusion-sync/config.json`, tokens in
 
 ```sh
 ./fusion_sync.py sync                        # mirror everything, native format
+./fusion_sync.py sync --dirs-only            # only make released/ and jobs/ in synced designs; offline, instant
 ./fusion_sync.py sync --dry-run              # see what would change
 ./fusion_sync.py sync --formats native,step  # also keep a STEP next to each design
 ./fusion_sync.py sync --project "Bike"
@@ -121,7 +122,9 @@ Or in the foreground: `./fusion_sync.py watch --interval 900`.
 2. **Walk**: `GET project/v1/hubs` → `.../projects` → `.../topFolders` →
    `GET data/v1/projects/{p}/folders/{f}/contents` (recursive, paginated). Each item's
    tip version comes back in the `included` array.
-3. **Decide**: compare the tip version id with `manifest.json`. Unchanged items are skipped.
+3. **Decide**: compare the tip version id with `manifest.json`. Unchanged items are skipped
+   without asking the cloud anything more; the export formats it offered are kept in the
+   manifest, so a run over an unchanged store makes only the listing calls.
 4. **Export**: for Fusion items, `GET .../versions/{v}/downloadFormats` lists what the
    cloud can produce; `POST data/v1/projects/{p}/downloads` starts an export job;
    `GET .../jobs/{job}` is polled until it turns into a `downloads` object whose

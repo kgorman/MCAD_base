@@ -224,6 +224,17 @@ class SyncEngineTests(unittest.TestCase):
         self.assertTrue((self.design / "jobs").is_dir())
         self.assertFalse((self.root / "Kenny's Hub" / "released").exists())   # only inside designs
 
+    def test_dirs_only_makes_the_areas_offline(self):
+        self.run_sync()
+        (self.design / "jobs").rmdir()
+        gone = json.loads((self.root / ".fusion-sync" / "manifest.json").read_text())
+        gone["items"]["ghost"] = {"dir": "Kenny's Hub/Nowhere/Ghost"}   # a design folder that is not there
+        (self.root / ".fusion-sync" / "manifest.json").write_text(json.dumps(gone))
+        made = fs.Syncer(self.cfg, api=None, formats=["native"]).make_areas_everywhere()
+        self.assertEqual(made, 2)                     # the design and the uploaded file; not the ghost
+        self.assertTrue((self.design / "jobs").is_dir())
+        self.assertFalse((self.root / "Kenny's Hub" / "Nowhere").exists())
+
     def test_design_json_and_history(self):
         self.run_sync()
         info = json.loads((self.design / "design.json").read_text())
@@ -265,7 +276,10 @@ class SyncEngineTests(unittest.TestCase):
 
     def test_second_run_is_noop(self):
         self.run_sync()
+        formats_calls = []
+        self.api.download_formats = lambda project_id, version_id: formats_calls.append(version_id) or ["f3d"]
         stats = self.run_sync()
+        self.assertEqual(formats_calls, [])          # an unchanged design costs no export-formats call
         self.assertEqual(stats.downloaded, 0)
         self.assertEqual(stats.skipped, 2)
         self.assertEqual(len(self.api.export_calls), 1)

@@ -599,6 +599,18 @@ class Syncer:
         self.manifest["updated_at"] = now_stamp()
         write_json(self.manifest_path, self.manifest)
 
+    def make_areas_everywhere(self) -> int:
+        """Offline: the empty released/ and jobs/ in every design the manifest knows. No cloud calls."""
+        require_store(self.cfg.root)
+        made = 0
+        for record in self.manifest["items"].values():
+            item_dir = self.cfg.root / record.get("dir", "")
+            if record.get("dir") and item_dir.is_dir():
+                self._make_areas(item_dir)
+                made += 1
+        log(f"Made released/ and jobs/ in {made} design folder(s) under {self.cfg.root}")
+        return made
+
     def _make_areas(self, item_dir: Path) -> None:
         """The empty released/ and jobs/ folders, so a design shows where its records go."""
         if self.dry_run or not item_dir.is_dir():
@@ -758,6 +770,7 @@ class Syncer:
         record = self.manifest["items"].get(item["id"], {})
         rel_dir = local_dir.relative_to(self.cfg.root)
         base = safe_name(display)
+        available: Optional[List[str]] = None
 
         # Which files do we want for this item? They all land in <item folder>/wip/.
         wanted: Dict[str, Path] = {}  # fmt -> local path
@@ -767,11 +780,14 @@ class Syncer:
             item_dir = self._item_dir(item["id"], local_dir / name)
             wanted["raw"] = item_dir / WIP_DIRNAME / name
         else:
-            try:
-                available = self.api.download_formats(project_id, version_id)
-            except ApiError as exc:
-                log(f"    ! cannot list export formats for {display}: {exc}", err=True)
-                available = []
+            if record.get("version_id") == version_id and "available" in record:
+                available = record["available"]  # same version as last time: the cloud's answer has not changed
+            else:
+                try:
+                    available = self.api.download_formats(project_id, version_id)
+                except ApiError as exc:
+                    log(f"    ! cannot list export formats for {display}: {exc}", err=True)
+                    available = []
             fmts = choose_formats(self.formats, available, kind, stored=bool(storage_href))
             if not fmts:
                 log(f"    - {rel_dir}/{display}: no exportable format (available: {available or 'none'})")
@@ -879,6 +895,8 @@ class Syncer:
                 "files": files,
                 "synced_at": now_stamp(),
             }
+            if available is not None:
+                record["available"] = available
             if export_failed:
                 record["export_failed"] = export_failed
             self.manifest["items"][item["id"]] = record
@@ -975,6 +993,9 @@ def _formats_from_args(cfg: Config, args: argparse.Namespace) -> List[str]:
 
 def cmd_sync(args: argparse.Namespace) -> None:
     cfg = Config.load()
+    if args.dirs_only:
+        Syncer(cfg, api=None, formats=_formats_from_args(cfg, args), dry_run=args.dry_run).make_areas_everywhere()
+        return
     api = Aps(Auth(cfg))
     syncer = Syncer(cfg, api, formats=_formats_from_args(cfg, args), dry_run=args.dry_run,
                     project_filter=args.project, hub_filter=args.hub)
@@ -1043,6 +1064,8 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("--hub", action="append", help="only this hub name (repeatable)")
         if name == "sync":
             s.add_argument("--dry-run", action="store_true", help="show what would be fetched")
+            s.add_argument("--dirs-only", action="store_true",
+                           help="only make the empty released/ and jobs/ in every synced design; no cloud calls")
         else:
             s.add_argument("--interval", type=int, default=900, help="seconds between passes")
         s.set_defaults(func=fn)
