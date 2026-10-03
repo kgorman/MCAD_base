@@ -10,20 +10,26 @@ The layout rules are in [CANONICAL_TREE.md](CANONICAL_TREE.md#getting-a-release-
 
 Posting from CAM gives one program per machine model. They go into the
 revision under `cam/<model>/`, lowercase, no spaces, and the manifest lists
-both models as proven on.
+both models as proven on. Each program has its setup sheet beside it.
 
 ```
 Kenny's Hub/Bike/Motor Mount/released/rev-a/
-  manifest.json            "process": { "proven_on": ["tormach-pcnc440", "haas-vf2"] }
+  manifest.json                        "process": { "proven_on": ["tormach-pcnc440", "haas-vf2"] }
   SHA256SUMS
   cad/motor-mount.f3d
+  drawings/motor-mount_rev-a.pdf
   cam/tormach-pcnc440/
-    o0042_op10.nc          PathPilot post
-    setup-sheet_op10.pdf
+    o0042_op10_rev-a.nc                PathPilot post
+    o0042_op10_rev-a_setup-sheet.pdf
   cam/haas-vf2/
-    o0042_op10.nc          Haas NGC post; the file starts with %, O00042
-    setup-sheet_op10.pdf
+    o0042_op10_rev-a.nc                Haas NGC post; the file starts with %, O00042
+    o0042_op10_rev-a_setup-sheet.pdf
 ```
+
+Two things about the names. The revision is in the file name, because the
+name is all a control shows before the program is loaded. And the setup
+sheet is named after its program, so the two sort together and the name is
+still unique once the file is copied out of its folder.
 
 Deep paths and names with spaces are fine for people and for the tools,
 but not for every control. `add-machine` makes a flat folder per machine
@@ -31,23 +37,74 @@ under `_outbox/`, and at each release the current programs are copied into
 it, replacing the old ones. Nothing is edited there; the copy in the
 revision stays frozen and checksummed.
 
+The operator needs more than the program: the setup sheet, and the drawing
+for checks at the machine. Those go into a second flat folder,
+`_outbox/<machine>-docs/`, read from a tablet or a PC at the machine. It
+is kept apart from the programs so that the control's list shows programs
+and nothing else.
+
 ```sh
 ./mcad_tree.py add-machine /path/to/store tormach-pcnc440
+./mcad_tree.py add-machine /path/to/store tormach-pcnc440-docs
 ./mcad_tree.py add-machine /path/to/store haas-vf2
+./mcad_tree.py add-machine /path/to/store haas-vf2-docs
 
 cd "/path/to/store/Kenny's Hub/Bike/Motor Mount/released/rev-a"
-cp cam/tormach-pcnc440/*.nc /path/to/store/_outbox/tormach-pcnc440/
-cp cam/haas-vf2/*.nc        /path/to/store/_outbox/haas-vf2/
+cp cam/tormach-pcnc440/*.nc  /path/to/store/_outbox/tormach-pcnc440/
+cp cam/tormach-pcnc440/*.pdf drawings/*.pdf /path/to/store/_outbox/tormach-pcnc440-docs/
+cp cam/haas-vf2/*.nc         /path/to/store/_outbox/haas-vf2/
+cp cam/haas-vf2/*.pdf        drawings/*.pdf /path/to/store/_outbox/haas-vf2-docs/
 ```
+
+When a revision replaces an older one, delete the older revision's files
+from both folders, so the outbox holds only what is current.
 
 ```
 <root>/
   _outbox/
     tormach-pcnc440/
-      o0042_op10.nc        <- the store pushes this to the Tormach
+      o0042_op10_rev-a.nc                <- the store pushes this to the Tormach
+    tormach-pcnc440-docs/
+      o0042_op10_rev-a_setup-sheet.pdf   <- read on a tablet or PC at the machine
+      motor-mount_rev-a.pdf
     haas-vf2/
-      o0042_op10.nc        <- the Haas reads this over the network
+      o0042_op10_rev-a.nc                <- the Haas reads this over the network
+    haas-vf2-docs/
+      o0042_op10_rev-a_setup-sheet.pdf
+      motor-mount_rev-a.pdf
 ```
+
+## What the operator has at the machine
+
+| The operator needs | It is | It reaches the machine as |
+|---|---|---|
+| The program | `cam/<model>/o0042_op10_rev-a.nc` | `_outbox/<machine>/` |
+| The setup: stock, fixture, zero, work offset, tools and their pockets | `cam/<model>/o0042_op10_rev-a_setup-sheet.pdf` | `_outbox/<machine>-docs/` |
+| What to measure | `drawings/motor-mount_rev-a.pdf` | `_outbox/<machine>-docs/` |
+| What to make today, and how many | a work order | not in the store; it records a job after it runs, not before |
+
+**Knowing what is loaded.** Two things say which part and revision a
+program is, and a release should have both:
+
+1. The file name: `o0042_op10_rev-a.nc` gives the program number, the
+   operation, and the revision.
+2. A comment header in the program itself, starting on the program-number
+   line. It travels with the program wherever it is copied, and it is in
+   the copy kept with the job record.
+
+   ```
+   %
+   O00042 (MOTOR MOUNT REV A OP10)
+   (HAAS VF-2 - SETUP SHEET O0042_OP10_REV-A)
+   (G54 - VISE, SOFT JAWS)
+   (T1 1/2 END MILL - T2 SPOT DRILL - T3 NO 7 DRILL)
+   ```
+
+   Set it in CAM so the post writes it; in Fusion it is the program comment
+   of the NC program. Do not add it by editing the posted file.
+
+Nothing in the tools requires a setup sheet or a header yet; see
+[issue #4](https://github.com/kgorman/MCAD_base/issues/4).
 
 ## Tormach, PathPilot: the store pushes
 
@@ -73,7 +130,7 @@ At each release:
    ```
 
 2. At the machine, open the File tab. The program is under Controller
-   Files. Load it and run.
+   Files. Load it, read the header against the setup sheet, and run.
 
 The controller has to be on to receive the copy. A one-line script run at
 release, or a folder sync that mirrors `_outbox/tormach-pcnc440/` to
@@ -127,8 +184,14 @@ Press F4. The Remote Net Share status should read UP.
 
 At each release: nothing at the machine. The outbox refill on the NAS is
 the whole step. At the control: LIST PROGRAM, choose the Net Share device,
-pick `o0042_op10.nc`, and copy it into Memory with F2 or select it to run.
-The program number inside the file, `O00042`, is what the control uses.
+pick `o0042_op10_rev-a.nc`, and copy it into Memory with F2 or select it to
+run. The program number inside the file, `O00042`, is what the control
+uses.
+
+On the Net Share device the list shows file names only, which is why the
+revision is in the name. Once the program is in Memory, the list has an
+`O #` column and a `Comment` column, and the comment is the one on the
+program's first line: `MOTOR MOUNT REV A OP10`.
 
 Older Haas controls without the NGC have no network share. For those it is
 the USB stick, or DNC over RS-232 from a PC that reads the outbox.
@@ -142,6 +205,7 @@ the USB stick, or DNC over RS-232 from a PC that reads the outbox.
 | Supported by the maker | Yes for the push; the fstab mount is not | Yes, Remote Net Share is a built-in feature |
 | Machine off at release time | Push fails; repeat it, or let a sync retry | Nothing to do; it reads the new file next time |
 | Program file | `.nc` from the PathPilot post | `.nc` from the Haas NGC post, `O`-number inside |
+| Setup sheet and drawing | `_outbox/tormach-pcnc440-docs/`, on a tablet or PC | `_outbox/haas-vf2-docs/`, on a tablet or PC |
 
 Afterwards, either way, the operator records the run in
 `jobs/<date>_<machine>_<job>/` with a copy of the file that ran and a
@@ -159,5 +223,7 @@ Afterwards, either way, the operator records the run in
   Remote Net Share and its settings.
 - Haas, [Networking Troubleshooting Guide, NGC (TG105)](https://www.haascnc.com/service/troubleshooting-and-how-to/troubleshooting/networking-troubleshooting-guide---ngc.html):
   SMBv2 from software 100.18.000.1020, the Enable SMBv1 Support setting.
+- Haas mill operator's manual, [Device Manager](https://www.haascnc.com/service/online-operator-s-manuals/mill-operator-s-manual/mill---device-manager.html):
+  the `O #` and `Comment` columns, shown in the Memory tab only.
 - [Haas Setting 908, Remote Share Path](https://www.helmancnc.com/haas-setting-908-remote-share-path/): no spaces in the path.
 - Shop Floor Automations, [How to configure Haas NGC network settings](https://support.shopfloorautomations.com/portal/en/kb/articles/how-to-configure-haas-ngc-network-settings).

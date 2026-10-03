@@ -235,14 +235,20 @@ More in
 ### Example: a Tormach and a Haas on the same NAS
 
 A revision holds one program per machine model, and at release each is
-copied into that machine's flat outbox:
+copied into that machine's flat outbox. The setup sheet and the drawing go
+into a second folder, for a tablet or PC at the machine:
 
 ```
-Motor Mount/released/rev-a/cam/tormach-pcnc440/o0042_op10.nc
-Motor Mount/released/rev-a/cam/haas-vf2/o0042_op10.nc
-_outbox/tormach-pcnc440/o0042_op10.nc     <- the store pushes this to the Tormach
-_outbox/haas-vf2/o0042_op10.nc            <- the Haas reads this over the network
+Motor Mount/released/rev-a/cam/tormach-pcnc440/o0042_op10_rev-a.nc
+Motor Mount/released/rev-a/cam/haas-vf2/o0042_op10_rev-a.nc
+_outbox/tormach-pcnc440/o0042_op10_rev-a.nc     <- the store pushes this to the Tormach
+_outbox/haas-vf2/o0042_op10_rev-a.nc            <- the Haas reads this over the network
+_outbox/haas-vf2-docs/o0042_op10_rev-a_setup-sheet.pdf
+_outbox/haas-vf2-docs/motor-mount_rev-a.pdf
 ```
+
+The revision is in the file name, and in a comment on the program's first
+line, so the operator can see at the control which revision is loaded.
 
 The two machines take it in opposite directions:
 
@@ -259,8 +265,8 @@ The two machines take it in opposite directions:
   name with no spaces, which is why the outbox is flat. After that a
   release needs nothing at the machine: it reads the new file next time.
 
-Settings, NAS setup, SMB versions, and the sources are in
-[docs/MACHINES.md](docs/MACHINES.md).
+Settings, NAS setup, SMB versions, what the operator has at the machine,
+and the sources are in [docs/MACHINES.md](docs/MACHINES.md).
 
 ## Record a job
 
