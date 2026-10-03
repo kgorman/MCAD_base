@@ -207,6 +207,24 @@ The full steps, with the manifest and the checksum command, are in
 [docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#releasing-a-revision-by-hand).
 `verify` confirms the result.
 
+### What stays in `wip/` and what goes in the release
+
+`wip/` holds what you are working on now. The release holds everything that
+made the part, copied at the moment it was approved. A source file is in
+both: the copy in `wip/` keeps changing, the copy in the release does not.
+
+| | In `wip/` | In `released/rev-a/` |
+|---|---|---|
+| CAD | the design, as it is today | `cad/`: the design as released, and a STEP |
+| Printed part | the slicer project and trial slices | `build/<process>/<model>/`: the G-code, and the slicer project that made it |
+| Machined part | the CAM file and trial posts | `cam/<model>/`: the NC program and its setup sheet |
+
+The frozen copy of the slicer project matters because `wip/` moves on.
+Later, it is the only thing that says which settings made the released
+G-code, and it is what you reopen to slice the same revision for a second
+printer model. A sliced 3MF is not a substitute: the one Bambu Studio
+exports holds the settings and the G-code but not the model.
+
 ## Get a release to a printer or CNC machine
 
 Machines run files from a released revision, never from `wip/`.

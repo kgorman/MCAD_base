@@ -110,9 +110,10 @@ subfolders of the design, not separate trees.
               build/                        <- additive, per process
                 fdm/
                   bambu-p1s/                <- one folder per printer model the revision is proven on
-                    bm-0042_rev-a.3mf       <- the slicer's own project file: model, settings, gcode
+                    bm-0042_rev-a.3mf       <- the slicer's own project file: model and settings
+                    bm-0042_rev-a.gcode.3mf <- the sliced file the printer runs: settings and gcode
                     profile.json            <- optional: the slicer settings, as exported
-                    bm-0042_rev-a.gcode     <- optional when the project file already holds the gcode
+                    bm-0042_rev-a.gcode     <- or plain gcode, for a printer that takes it
               cam/                          <- subtractive, per machine model
                 haas-vf2/
                   o0042_op10_rev-a.nc
@@ -402,9 +403,11 @@ without opening a slicer.
 
 What a revision releases for a printer is G-code: a `.gcode` file, or a
 sliced 3MF with the G-code inside. For a Bambu printer the sliced 3MF that
-Bambu Studio exports is enough on its own: it holds the model, the
-settings, and the G-code. A project 3MF saved before slicing holds no
-G-code and does not count. A separate `profile.json` beside it is
+Bambu Studio exports is enough to run: it holds the settings and the
+G-code. It does not hold the model, so keep the slicer project beside it;
+the project has the model and the settings, and is what gets re-sliced
+for another printer model. A project 3MF saved before slicing holds no
+G-code and does not count on its own. A separate `profile.json` is
 optional.
 
 These files are locked with the revision. Changing the material, color,
