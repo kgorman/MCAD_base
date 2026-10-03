@@ -178,9 +178,9 @@ manager and a terminal, and nothing else.
    - drawings in `drawings/`;
    - for each printer model, the G-code or sliced 3MF in
      `build/<process>/<model>/`, for example `build/fdm/bambu-p1s/`;
-   - for each machine tool model, the NC programs and setup sheets in
+   - for each CNC machine model, the NC programs and setup sheets in
      `cam/<model>/`, for example `cam/haas-vf2/`;
-   - name each program and G-code file with its revision, for example
+   - name each NC program and G-code file with its revision, for example
      `o0042_op10_rev-a.nc`, and each setup sheet after its program;
    - review and inspection records in `reviews/`.
 3. **Write `manifest.json`** in the revision folder. This much is enough:
@@ -243,7 +243,7 @@ Inside that revision:
 | Machine | Folder | What is there |
 |---|---|---|
 | A printer | `released/<rev>/build/<process>/<model>/` | G-code, or a sliced 3MF with the G-code inside |
-| A machine tool | `released/<rev>/cam/<model>/` | NC programs and setup sheets |
+| A CNC machine | `released/<rev>/cam/<model>/` | NC programs and setup sheets |
 
 Do not run a revision that holds an `OBSOLETE` file.
 
@@ -265,7 +265,7 @@ Do not run a revision that holds an `OBSOLETE` file.
    PC at the machine, so the control's list shows only programs.
 
 **Which revision a file is.** Once a file leaves its revision folder, its
-path no longer says what it is. So a program or G-code file carries its
+path no longer says what it is. So an NC program or G-code file carries its
 revision in its name, `o0042_op10_rev-a.nc`, and a setup sheet is named
 after its program, `o0042_op10_rev-a_setup-sheet.pdf`. An NC program also
 names the part, revision, and operation in a comment on its first line,

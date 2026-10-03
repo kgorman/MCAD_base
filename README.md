@@ -46,7 +46,7 @@ A design goes around one loop, and every turn leaves files in its folder.
 1. **Design.** Work in `wip/`. Save as often as you like; nothing here is
    a record. A Fusion sync fills `wip/` for you. See
    [Start a design](#start-a-design).
-2. **Release.** When a version is good, copy it into `released/rev-a/`
+2. **Release.** When the design is good, copy it into `released/rev-a/`
    with its drawings and the program for each machine model, write the
    manifest naming who reviewed and approved it, and write the checksums.
    The folder is frozen from then on, and `released/CURRENT` names it.

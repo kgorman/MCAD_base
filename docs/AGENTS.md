@@ -98,7 +98,7 @@ Three sources, in order of authority:
   on the MCAD_base repository; do not invent folders or rename
   `wip/`, `released/`, or `jobs/`.
 - **Cover printed and machined parts.** Printer files go in
-  `build/<process>/<model>/`, machine tool programs in `cam/<model>/`.
+  `build/<process>/<model>/`, NC programs for CNC machines in `cam/<model>/`.
 
 ## What `check` enforces
 
