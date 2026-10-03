@@ -232,6 +232,36 @@ Three ways to get the file to the machine:
 More in
 [docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#getting-a-release-to-a-machine).
 
+### Example: a Tormach and a Haas on the same NAS
+
+A revision holds one program per machine model, and at release each is
+copied into that machine's flat outbox:
+
+```
+Motor Mount/released/rev-a/cam/tormach-pcnc440/o0042_op10.nc
+Motor Mount/released/rev-a/cam/haas-vf2/o0042_op10.nc
+_outbox/tormach-pcnc440/o0042_op10.nc     <- the store pushes this to the Tormach
+_outbox/haas-vf2/o0042_op10.nc            <- the Haas reads this over the network
+```
+
+The two machines take it in opposite directions:
+
+- **Tormach, PathPilot: the store pushes.** PathPilot shares its own
+  G-code folder on the network as `gcode` and cannot mount anyone else's,
+  so at each release you copy the outbox into `\\tormach\gcode`. The
+  program then shows under Controller Files in the File tab. Mounting the
+  NAS on PathPilot through `/etc/fstab` works too, but Tormach does not
+  support it.
+- **Haas, Next Generation Control: the machine pulls.** The control's
+  Remote Net Share mounts a NAS share and lists it as a device under LIST
+  PROGRAM. Make a share named `haas-vf2` that points at
+  `_outbox/haas-vf2/`, with a read-only user; the share setting takes a
+  name with no spaces, which is why the outbox is flat. After that a
+  release needs nothing at the machine: it reads the new file next time.
+
+Settings, NAS setup, SMB versions, and the sources are in
+[docs/MACHINES.md](docs/MACHINES.md).
+
 ## Record a job
 
 A job is one run of one revision on one machine. It is recorded by hand,
@@ -417,6 +447,7 @@ enforces, and how to test the result.
 | `fusion_sync.py` | Mirrors Fusion cloud hubs into the store. |
 | `docs/CANONICAL_TREE.md` | The layout, its rules, the file formats, and the ISO mapping. Copied into the store as `SCHEMA.md`. |
 | `docs/FUSION_SYNC.md` | Setting up and running the Fusion sync. |
+| `docs/MACHINES.md` | Getting programs to a Tormach and a Haas: two worked examples. |
 | `docs/AGENTS.md` | What an AI coding agent needs to know to write compatible code. |
 | `tests/` | Offline tests for both tools and for the two working together. |
 

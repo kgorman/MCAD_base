@@ -257,6 +257,9 @@ Do not run a revision that holds an `OBSOLETE` file.
    one machine. At each release, copy that machine's programs from the
    revision into it, replacing the old ones. Nothing is edited there.
 
+Worked examples for a Tormach (PathPilot) and a Haas (Next Generation
+Control) are in [MACHINES.md](MACHINES.md).
+
 **Afterwards.** Record the run in `jobs/<date>_<machine>_<job>/`, with
 a copy of the exact file that ran and a `job.json`. That ties the
 physical part to the revision.
