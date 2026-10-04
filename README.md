@@ -1,8 +1,9 @@
 # MCAD_base
 
-Product data management (PDM) for shops that make parts by CNC machining
-and additive manufacturing, kept in plain folders on a NAS or any shared
-drive. The file system is the database: every record is a plain file in
+An open-source folder standard for manufacturing. It sets how a shop that
+makes parts by CNC machining and additive manufacturing keeps its design
+files, in plain folders on a NAS or any shared drive. The file system is
+the database: every record is a plain file in
 the tree, with no server and no separate database, so the store stays
 readable without these tools.
 
@@ -10,7 +11,9 @@ Every design has one folder holding its working CAD files, its frozen
 released revisions, the G-code and NC programs its machines run, and the
 record of what was made from them. The layout works with any CAD or CAM
 system, and printers and CNC machines take their files straight from a
-released revision.
+released revision. For Autodesk Fusion, the included sync tool copies
+every design from the cloud into the store. See
+[docs/FUSION_SYNC.md](docs/FUSION_SYNC.md).
 
 It is built to help a shop meet ISO 9001: the records an auditor asks for
 are files in the design's own folder. See [ISO alignment](#iso-alignment).
