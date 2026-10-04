@@ -453,8 +453,9 @@ appear in the tree.
   assembly links to.
 
 Setup, formats, and scheduling are in
-[docs/FUSION_SYNC.md](docs/FUSION_SYNC.md). The sync has been tested
-offline only; it has not yet run against a live Autodesk account.
+[docs/FUSION_SYNC.md](docs/FUSION_SYNC.md). The sync has been run
+against a live Autodesk account, on a hub of 27 projects and more than
+600 designs.
 
 ## Compatible products
 
@@ -496,5 +497,4 @@ and `fusion_sync.py`. See [LICENSE](LICENSE).
 ## Not done yet
 
 - Assemblies whose files sit in more than one design folder.
-- A run of the Fusion sync against a live Autodesk account.
 - A run of either tool on Windows.

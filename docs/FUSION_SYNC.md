@@ -147,7 +147,6 @@ Rate limits and transient errors get exponential backoff with `Retry-After` hono
 - Only hubs your Autodesk account can see through the API are mirrored. Personal hubs
   work; some education or admin-locked team hubs may not expose the Data Management API.
 - A project's single root folder is flattened so the path reads `hub/project/design`.
-  This has not yet been confirmed against a live hub.
 - Design history is preserved inside `.f3d`/`.f3z` archives. STEP/STL exports are
   geometry only.
 
