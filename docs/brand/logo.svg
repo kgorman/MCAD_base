@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="MCAD_base logo">
+  <rect width="200" height="200" rx="40" fill="#0a1a3a"/>
+  <circle cx="100" cy="100" r="70" fill="#274690"/>
+  <circle cx="80.4" cy="100" r="50.4" fill="#3f6fd6"/>
+  <circle cx="63.6" cy="100" r="33.6" fill="#6a9bf7"/>
+  <circle cx="49.6" cy="100" r="19.6" fill="#c7dcff"/>
+</svg>

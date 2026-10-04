@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/logo.svg" width="140" alt="MCAD_base logo"></p>
+
 # MCAD_base
 
 An open-source folder standard for manufacturing. It sets how a shop that
