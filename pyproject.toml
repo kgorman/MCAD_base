@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcad-base"
+dynamic = ["version"]
+description = "A filesystem-based manufacturing design store standard and its tools."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+py-modules = ["mcad_tree", "fusion_sync"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mcad_tree.__version__" }
