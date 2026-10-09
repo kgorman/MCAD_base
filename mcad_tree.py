@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 # The version of these tools. It changes with every release of the repository.
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 # The version of the layout. It changes only when a store that was valid would stop being valid;
 # see "Versions" in docs/CANONICAL_TREE.md.
 SCHEMA_VERSION = 2
