@@ -11,8 +11,9 @@ copied into the store as SCHEMA.md.
 `init` marks a folder as a store. People make design folders by hand; a sync
 tool such as fusion_sync.py makes them from a CAD system's cloud. `check`
 finds what is missing or out of place, `verify` also re-hashes every released
-file, and `index` writes a part-number lookup. All are safe to re-run; none
-overwrite or delete what they did not write.
+file, `index` writes a part-number lookup, and `archive` snapshots the whole
+store into one dated tar.gz. All are safe to re-run; none overwrite or delete
+what they did not write.
 
 Standard library only. Python 3.9+.
 
@@ -23,6 +24,7 @@ Quick start:
     ./mcad_tree.py verify /path/to/store           # check, plus re-hash every released file
     ./mcad_tree.py index /path/to/store            # write _index/parts.csv
     ./mcad_tree.py add-machine /path/to/store haas-vf2
+    ./mcad_tree.py archive /path/to/store          # snapshot everything to _archive/<date>.tar.gz; no-op if unchanged
     ./mcad_tree.py upgrade /path/to/store --dry-run  # move a store to this tool's schema
 """
 
@@ -37,12 +39,13 @@ import json
 import os
 import re
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 # The version of these tools. It changes with every release of the repository.
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 # The version of the layout. It changes only when a store that was valid would stop being valid;
 # see "Versions" in docs/CANONICAL_TREE.md.
 SCHEMA_VERSION = 2
@@ -81,7 +84,13 @@ DISPOSITIONS = ("scrap", "rework", "use-as-is", "return")
 # At the store root, beside the hubs.
 INDEX_DIRNAME = "_index"
 OUTBOX_DIRNAME = "_outbox"
+ARCHIVE_DIRNAME = "_archive"
+ROOT_DIRNAMES = (INDEX_DIRNAME, OUTBOX_DIRNAME, ARCHIVE_DIRNAME)
 PARTS_INDEX = "parts.csv"
+# Whole-store snapshots: <prefix>-<date>-<time>.tar.gz, each with a .sha256 beside it, and one
+# ledger line per snapshot. Paths inside a snapshot are store-relative.
+ARCHIVE_PREFIX = "mcad_base"
+ARCHIVE_LEDGER = "archives.jsonl"
 INDEX_COLUMNS = ["part_number", "name", "kind", "hub", "project", "path",
                  "current_revision", "wip_version", "deleted_in_cloud"]
 
@@ -123,6 +132,9 @@ the schema.
 
 # Things the NAS or a client OS drops on a share; never ours, never reported.
 IGNORED = {"#recycle", "@eaDir", "#snapshot", "desktop.ini", "Thumbs.db"}
+# Left out of a snapshot. Other dot-names (the store marker, a sync tool's state) are kept,
+# because a restore needs them.
+ARCHIVE_SKIP = IGNORED | {".DS_Store"}
 # Names the schema itself spells in capitals.
 WELL_KNOWN = {"README.md", "SCHEMA.md", "CURRENT", "OBSOLETE", "SHA256SUMS", "CHANGELOG.md"}
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -542,7 +554,7 @@ def check_tree(root: Path, hashes: bool = False) -> Tuple[List[str], List[str]]:
             continue
         if not (root / entry).is_dir():
             notes.append(f"loose file at the root: {entry}")
-        elif entry.startswith("_") and entry not in (INDEX_DIRNAME, OUTBOX_DIRNAME):
+        elif entry.startswith("_") and entry not in ROOT_DIRNAMES:
             notes.append(f"unknown folder at the root: {entry}")
 
     seen: Dict[str, str] = {}
@@ -665,6 +677,126 @@ def add_machine(root: Path, name: str, dry_run: bool = False, out: Callable[[str
     return sc.changed
 
 
+# ---------- Snapshots ----------
+
+def store_files(root: Path, exclude: Optional[Path] = None) -> Iterator[Tuple[Path, str]]:
+    """Every file in the store, in a fixed order, as (path, store-relative name). Leaves out NAS and
+    Finder leavings and the folder the snapshots themselves go in."""
+    exclude = exclude.resolve() if exclude else None
+    for dirpath, dirnames, filenames in os.walk(root):
+        here = Path(dirpath)
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in ARCHIVE_SKIP and (exclude is None or (here / d).resolve() != exclude))
+        for name in sorted(filenames):
+            if name not in ARCHIVE_SKIP:
+                yield here / name, store_path(here / name, root)
+
+
+def store_fingerprint(root: Path, exclude: Optional[Path] = None) -> Tuple[str, int, int]:
+    """A digest over every file's name, size, and modification time, so two walks of an unchanged
+    store agree. Reads no file. Returns (digest, file count, total bytes)."""
+    digest = hashlib.sha256()
+    count = total = 0
+    for path, rel in store_files(root, exclude):
+        st = path.stat()
+        digest.update(f"{rel}\t{st.st_size}\t{st.st_mtime_ns}\n".encode("utf-8"))
+        count += 1
+        total += st.st_size
+    return digest.hexdigest(), count, total
+
+
+def archive_ledger(dest: Path) -> List[dict]:
+    """Every snapshot written to dest, oldest first."""
+    ledger = dest / ARCHIVE_LEDGER
+    if not ledger.exists():
+        return []
+    entries = []
+    for number, line in enumerate(ledger.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError as exc:
+            raise TreeError(f"{ledger} line {number} is not JSON: {exc}")
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
+class _HashingWriter:
+    """A file that remembers the SHA-256 of what was written, so the snapshot's hash costs no second read."""
+
+    def __init__(self, fh):
+        self._fh = fh
+        self.digest = hashlib.sha256()
+
+    def write(self, data) -> int:
+        self.digest.update(data)
+        return self._fh.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+
+def archive_tree(root: Path, dest: Optional[Path] = None, dry_run: bool = False, force: bool = False,
+                 out: Callable[[str], None] = print) -> Optional[Path]:
+    """Snapshot the whole store into one dated tar.gz under dest, by default <root>/_archive/.
+
+    Idempotent: when the store has not changed since the last snapshot and that snapshot is still
+    there, nothing is written. The snapshot is built under a temporary name and renamed into place
+    only when complete, so an interrupted run leaves nothing that looks finished. Returns the path
+    of the snapshot written (or that would be written), or None when there was nothing to do."""
+    require_store(root)
+    dest = Path(dest) if dest else root / ARCHIVE_DIRNAME
+    fingerprint, count, total = store_fingerprint(root, dest)
+    entries = archive_ledger(dest)
+    last = entries[-1] if entries else None
+    if last and not force and last.get("fingerprint") == fingerprint and (dest / str(last.get("file"))).is_file():
+        out(f"Nothing to do: the store has not changed since {last['file']} ({last.get('at')}).")
+        return None
+
+    stamp = datetime.datetime.now().astimezone()
+    name = f"{ARCHIVE_PREFIX}-{stamp.strftime('%Y-%m-%d-%H%M%S')}.tar.gz"
+    serial = 1
+    while (dest / name).exists():  # two snapshots within one second
+        serial += 1
+        name = f"{ARCHIVE_PREFIX}-{stamp.strftime('%Y-%m-%d-%H%M%S')}-{serial}.tar.gz"
+    target = dest / name
+    shown = store_path(target, root) if root.resolve() in target.resolve().parents else str(target)
+    out(f"{'Would write' if dry_run else 'Writing'} {shown}: {count} file(s), {total:,} bytes")
+    if dry_run:
+        return target
+
+    dest.mkdir(parents=True, exist_ok=True)
+    partial = dest / f".partial-{name}"
+    try:
+        with partial.open("wb") as raw:
+            writer = _HashingWriter(raw)
+            with tarfile.open(fileobj=writer, mode="w:gz", compresslevel=6) as tar:
+                for path, rel in store_files(root, dest):
+                    tar.add(path, arcname=rel, recursive=False)
+        sha = writer.digest.hexdigest()
+    except BaseException:
+        if partial.exists():
+            partial.unlink()
+        raise
+    partial.replace(target)
+    (dest / f"{name}.sha256").write_text(f"{sha}  {name}\n", encoding="utf-8")
+    with (dest / ARCHIVE_LEDGER).open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "at": stamp.isoformat(timespec="seconds"),
+            "file": name,
+            "bytes": target.stat().st_size,
+            "sha256": sha,
+            "files": count,
+            "store_bytes": total,
+            "fingerprint": fingerprint,
+            "tool": __version__,
+        }, sort_keys=True) + "\n")
+    out(f"Wrote {shown} ({target.stat().st_size:,} bytes, sha256 {sha}).")
+    return target
+
+
 # ---------- CLI ----------
 
 def summarize(changed: int, dry_run: bool) -> None:
@@ -700,6 +832,10 @@ def cmd_index(args: argparse.Namespace) -> None:
 
 def cmd_add_machine(args: argparse.Namespace) -> None:
     summarize(add_machine(Path(args.root), args.name, args.dry_run), args.dry_run)
+
+
+def cmd_archive(args: argparse.Namespace) -> None:
+    archive_tree(Path(args.root), Path(args.dest) if args.dest else None, args.dry_run, args.force)
 
 
 def cmd_upgrade(args: argparse.Namespace) -> None:
@@ -742,6 +878,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name", help="e.g. haas-vf2")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_add_machine)
+
+    s = sub.add_parser("archive", help="snapshot the whole store into one dated tar.gz under _archive/; "
+                                       "writes nothing if the store has not changed since the last snapshot")
+    s.add_argument("root")
+    s.add_argument("--dest", help="write snapshots here instead, e.g. a folder on another disk")
+    s.add_argument("--force", action="store_true", help="write a snapshot even if nothing has changed")
+    s.add_argument("--dry-run", action="store_true", help="say what would be written")
+    s.set_defaults(func=cmd_archive)
 
     s = sub.add_parser("upgrade", help="move a store from an older schema to this tool's; never changes a released revision")
     s.add_argument("root")

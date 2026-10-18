@@ -154,6 +154,7 @@ storage in the sync).
     (anything else)   yours
   _index/parts.csv    generated: part number -> folder
   _outbox/<machine>/  flat copies for machines, only if needed
+  _archive/           whole-store snapshots: <date>.tar.gz, .sha256, ledger
 ```
 
 A folder is a design as soon as it holds `wip/`, `released/`, or `jobs/`.
@@ -323,6 +324,7 @@ The fields are in
 ./mcad_tree.py verify /path/to/store   # check, plus re-hash every released file
 ./mcad_tree.py index /path/to/store    # writes _index/parts.csv
 ./mcad_tree.py add-machine /path/to/store haas-vf2
+./mcad_tree.py archive /path/to/store  # snapshot everything to _archive/; no-op if unchanged
 ./mcad_tree.py upgrade /path/to/store  # move a store to a newer schema
 ./mcad_tree.py --version               # tool version and schema version
 ```
@@ -385,6 +387,22 @@ first.
   the design is inside it.
 - After a restore, `verify` re-hashes every released file against its
   `SHA256SUMS` and reports any that did not come back intact.
+
+For a point-in-time copy made by the tools themselves, `archive` writes
+the whole store into one dated `tar.gz` under `_archive/`, with a
+`.sha256` beside it and a line in `_archive/archives.jsonl`. It is safe
+to run on a schedule: it writes a new snapshot only when the store has
+changed since the last one, and otherwise reports nothing to do.
+`--dest` sends snapshots to another disk instead.
+
+```sh
+./mcad_tree.py archive /path/to/store
+./mcad_tree.py archive /path/to/store --dest /Volumes/offsite/mcad-snapshots
+tar -xzf _archive/mcad_base-2026-10-18-103000.tar.gz -C /path/to/empty/folder   # restore
+```
+
+A snapshot on the same disk as the store is a point to go back to, not
+an off-site backup; it does not replace the shop's backup of the share.
 
 ## Users and permissions
 

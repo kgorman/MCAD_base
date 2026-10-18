@@ -140,6 +140,10 @@ subfolders of the design, not separate trees.
   _outbox/                                  <- only if a machine needs it; created by add-machine
     haas-vf2/                               <- flat, safe names; copies from released/, never edited
     haas-vf2-docs/                          <- setup sheets and drawings for the operator; same rules
+  _archive/                                 <- whole-store snapshots, written by mcad_tree.py archive
+    mcad_base-2026-10-18-103000.tar.gz      <- everything above, store-relative paths
+    mcad_base-2026-10-18-103000.tar.gz.sha256
+    archives.jsonl                          <- one line per snapshot: when, file, size, hash, fingerprint
 ```
 
 The `.f3d` and `.f3z` names and the `.fusion-sync/` folder are what a Fusion sync
@@ -529,6 +533,43 @@ What it cannot find: an artifact your shop expects that neither the
 manifest nor this schema requires. A revision with no drawing passes
 unless the manifest lists one.
 
+## Snapshots
+
+`mcad_tree.py archive <root>` writes the whole store into one file:
+`_archive/mcad_base-<date>-<time>.tar.gz`, with the date and time the
+snapshot started, in local time. Beside it go `<file>.sha256`, the hash
+of the snapshot in the format `shasum -c` reads, and a line in
+`_archive/archives.jsonl`:
+
+```json
+{"at": "2026-10-18T10:30:00-05:00", "file": "mcad_base-2026-10-18-103000.tar.gz",
+ "bytes": 1612345678, "sha256": "…", "files": 4120, "store_bytes": 1700000000,
+ "fingerprint": "…", "tool": "0.1.3"}
+```
+
+A snapshot holds every file in the store with its store-relative path,
+including `.mcad-tree.json` and a sync tool's state folder, and leaves
+out only `_archive/` itself and what the NAS or Finder drops on a share.
+`tar -xzf <file> -C <empty folder>` recreates a complete, working store;
+`verify` on the result confirms every released file came back intact.
+
+The command is idempotent. Before writing, it fingerprints the store
+(every file's name, size, and modification time; no file is read) and
+compares it with the fingerprint in the last ledger line. If they match
+and that snapshot is still there, it writes nothing and says so. Run it
+hourly or nightly from a scheduler; a snapshot appears only when the
+store changed. `--force` writes one regardless. `--dest <folder>` puts
+snapshots and their ledger somewhere else, such as a folder on another
+disk; the store's own `_archive/` is then not used.
+
+A snapshot is written under a temporary dot-name and renamed into place
+only when complete, so a run that is interrupted leaves no file that
+looks like a finished snapshot.
+
+What the command does not do: it does not prune old snapshots, verify
+existing ones, or copy them off the box. A snapshot on the same disk as
+the store is a point in time to go back to, not an off-site backup.
+
 ## Who writes where
 
 | Area | Writer | Mutability | Reader |
@@ -543,6 +584,7 @@ unless the manifest lists one.
 | `<design>/` anything else | people | free | people |
 | `_index/` | mcad_tree index | regenerated | people, scripts |
 | `_outbox/<machine>/` | whoever releases, copying from the revision | replaced on release | machines via a network share |
+| `_archive/` | mcad_tree archive | a snapshot and its `.sha256` are never changed; the ledger is append-only | whoever restores |
 
 ## MCAD_base compatible
 

@@ -55,6 +55,7 @@ Three sources, in order of authority:
     (anything else)    belongs to people
   _index/parts.csv     generated
   _outbox/<machine>/   flat copies for machines
+  _archive/            whole-store snapshots from mcad_tree.py archive; never read as designs
 ```
 
 ## Before your code writes anything

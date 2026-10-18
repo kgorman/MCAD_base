@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Tests for mcad_tree: sets up a store in a temp folder and checks it."""
 
+import contextlib
 import csv
+import io
 import json
 import sys
+import tarfile
 import tempfile
 import zipfile
 import unittest
@@ -387,6 +390,108 @@ class McadTreeTest(unittest.TestCase):
     def test_index_requires_a_store(self):
         with self.assertRaises(mt.TreeError):
             mt.build_index(self.root, out=quiet)
+
+    # -- archive ----------------------------------------------------------- #
+
+    def archive_names(self, dest=None):
+        dest = dest or self.root / "_archive"
+        return sorted(p.name for p in dest.iterdir() if p.suffix == ".gz") if dest.is_dir() else []
+
+    def test_archive_snapshots_the_whole_store_and_restores_cleanly(self):
+        mt.init_tree(self.root, out=quiet)
+        design = self.make_design(part_number="bm-0042")
+        self.make_revision(design)
+        (self.root / ".fusion-sync").mkdir()
+        (self.root / ".fusion-sync" / "manifest.json").write_text("{}")
+        (self.root / ".DS_Store").write_text("finder")
+        (design / "wip" / ".DS_Store").write_text("finder")
+
+        written = mt.archive_tree(self.root, out=quiet)
+        self.assertEqual(written.parent, self.root / "_archive")
+        self.assertRegex(written.name, r"^mcad_base-\d{4}-\d{2}-\d{2}-\d{6}\.tar\.gz$")
+        sidecar = (written.parent / f"{written.name}.sha256").read_text().split()
+        self.assertEqual(sidecar, [mt.file_digest(written), written.name])
+        [entry] = mt.archive_ledger(self.root / "_archive")
+        self.assertEqual(entry["file"], written.name)
+        self.assertEqual(entry["sha256"], sidecar[0])
+        self.assertEqual(entry["bytes"], written.stat().st_size)
+
+        with tarfile.open(written) as tar:
+            names = set(tar.getnames())
+        self.assertIn(".mcad-tree.json", names)
+        self.assertIn(".fusion-sync/manifest.json", names)
+        self.assertIn("Kenny's Hub/Bike/Headset Spacers/released/rev-a/SHA256SUMS", names)
+        self.assertFalse(any(".DS_Store" in n for n in names))
+        self.assertFalse(any(n.startswith("_archive") for n in names))
+        self.assertEqual(entry["files"], len(names))
+
+        restored = Path(tempfile.mkdtemp()) / "restored"
+        restored.mkdir()
+        with tarfile.open(written) as tar:
+            tar.extractall(restored, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
+        self.assertEqual(mt.check_tree(restored), ([], []))
+        self.assertEqual(mt.check_tree(self.root), ([], []))  # _archive/ is a known root folder
+
+    def test_archive_is_idempotent_until_the_store_changes(self):
+        mt.init_tree(self.root, out=quiet)
+        design = self.make_design()
+        first = mt.archive_tree(self.root, out=quiet)
+        self.assertIsNone(mt.archive_tree(self.root, out=quiet))
+        self.assertIsNone(mt.archive_tree(self.root, out=quiet))
+        self.assertEqual(self.archive_names(), [first.name])
+        self.assertEqual(len(mt.archive_ledger(self.root / "_archive")), 1)
+
+        (design / "wip" / "notes.md").write_text("changed")
+        second = mt.archive_tree(self.root, out=quiet)
+        self.assertIsNotNone(second)
+        self.assertEqual(len(self.archive_names()), 2)
+
+        third = mt.archive_tree(self.root, force=True, out=quiet)
+        self.assertIsNotNone(third)
+        self.assertEqual(len(self.archive_names()), 3)
+        self.assertEqual(len(mt.archive_ledger(self.root / "_archive")), 3)
+
+        third.unlink()  # the ledger says it exists; it does not, so the next run writes again
+        self.assertIsNotNone(mt.archive_tree(self.root, out=quiet))
+
+    def test_archive_dry_run_writes_nothing(self):
+        mt.init_tree(self.root, out=quiet)
+        self.make_design()
+        planned = mt.archive_tree(self.root, dry_run=True, out=quiet)
+        self.assertIsNotNone(planned)
+        self.assertFalse((self.root / "_archive").exists())
+
+    def test_archive_to_another_place(self):
+        mt.init_tree(self.root, out=quiet)
+        self.make_design()
+        dest = Path(tempfile.mkdtemp()) / "offsite"
+        written = mt.archive_tree(self.root, dest=dest, out=quiet)
+        self.assertEqual(written.parent, dest)
+        self.assertEqual(len(mt.archive_ledger(dest)), 1)
+        self.assertFalse((self.root / "_archive").exists())
+        self.assertIsNone(mt.archive_tree(self.root, dest=dest, out=quiet))
+
+    def test_archive_leaves_no_partial_file_on_failure(self):
+        mt.init_tree(self.root, out=quiet)
+        self.make_design()
+        with mock.patch.object(mt.tarfile, "open", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                mt.archive_tree(self.root, out=quiet)
+        self.assertEqual(list((self.root / "_archive").iterdir()), [])
+        self.assertEqual(mt.archive_ledger(self.root / "_archive"), [])
+
+    def test_archive_requires_a_store(self):
+        with self.assertRaises(mt.TreeError):
+            mt.archive_tree(self.root, out=quiet)
+
+    def test_archive_cli(self):
+        mt.init_tree(self.root, out=quiet)
+        self.make_design()
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            mt.main(["archive", str(self.root)])
+            mt.main(["archive", str(self.root)])
+        self.assertEqual(len(self.archive_names()), 1)
+        self.assertIn("Nothing to do", printed.getvalue())
 
     # -- outbox ------------------------------------------------------------ #
 
