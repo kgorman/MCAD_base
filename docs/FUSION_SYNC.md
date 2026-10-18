@@ -48,8 +48,10 @@ rest, including `part_number`.
 | Design deleted | The folder stays and gets a `DELETED_IN_CLOUD` marker. Nothing is removed. |
 | Deleted design restored | The marker is removed. |
 
-Deletes are only recognized on a complete pass: no `--hub` or `--project` filter and no
-errors. A partial pass cannot tell "deleted" from "not looked at".
+Deletes are only recognized on a complete pass: no `--hub` or `--project` filter, and every
+project listed. A partial pass cannot tell "deleted" from "not looked at". A file the cloud
+would not export or deliver does not stop it, since the design itself was still listed; a
+project that could not be listed does, and the log says so.
 
 ## One-time setup
 

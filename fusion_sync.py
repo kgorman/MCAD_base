@@ -86,7 +86,7 @@ HISTORY_FILE = "history.jsonl"
 DELETED_MARKER = "DELETED_IN_CLOUD"
 STORE_MARKER = ".mcad-tree.json"  # written by mcad_tree.py init
 STORE_SCHEMA = 2
-__version__ = "0.1.1"  # the tools' version; kept in step with mcad_tree.py
+__version__ = "0.1.2"  # the tools' version; kept in step with mcad_tree.py
 
 # What "native" means per Fusion item kind. A design keeps every one of its formats the cloud
 # has: the f3d, then the f3z archive, which also carries copies of the designs it references.
@@ -572,7 +572,8 @@ class SyncStats:
     scanned: int = 0
     downloaded: int = 0
     skipped: int = 0
-    failed: int = 0
+    failed: int = 0      # files the cloud would not export or deliver; the item itself was seen
+    unlisted: int = 0    # projects whose contents could not be listed; their items were not seen
     bytes: int = 0
 
 
@@ -684,8 +685,13 @@ class Syncer:
 
     def _mark_deleted(self) -> None:
         """Items that vanished from the cloud keep their folder and get a marker. Nothing is removed."""
-        # Only a complete, clean pass can tell "deleted" from "not looked at".
-        if self.dry_run or self.stats.failed or self.hub_filter or self.project_filter or not self.seen:
+        # Only a complete pass can tell "deleted" from "not looked at". A file the cloud
+        # refused to export does not count against that: the item was still listed and seen.
+        # A project that could not be listed does, since its items were never seen.
+        if self.dry_run or self.hub_filter or self.project_filter or not self.seen:
+            return
+        if self.stats.unlisted:
+            log(f"  Deletes not checked: {self.stats.unlisted} project(s) could not be listed this pass.", err=True)
             return
         for item_id, record in self.manifest["items"].items():
             if item_id in self.seen or record.get("deleted_in_cloud") or not record.get("dir"):
@@ -726,11 +732,13 @@ class Syncer:
                 except ApiError as exc:
                     log(f"  ! skipping project {proj_name}: {exc}", err=True)
                     self.stats.failed += 1
+                    self.stats.unlisted += 1
                 self.save_manifest()
         self._mark_deleted()
         self.save_manifest()
         s = self.stats
-        log(f"Done. scanned={s.scanned} downloaded={s.downloaded} skipped={s.skipped} failed={s.failed} bytes={s.bytes:,}")
+        log(f"Done. scanned={s.scanned} downloaded={s.downloaded} skipped={s.skipped} failed={s.failed} "
+            f"unlisted={s.unlisted} bytes={s.bytes:,}")
         return s
 
     def _walk_folder(self, project_id: str, folder: Dict[str, Any], local_dir: Path, ctx: Dict[str, str]) -> None:

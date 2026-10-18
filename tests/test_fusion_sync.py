@@ -393,6 +393,41 @@ class SyncEngineTests(unittest.TestCase):
         self.assertFalse((self.design / "DELETED_IN_CLOUD").exists())
         self.assertEqual(self.history(self.design)[-1]["event"], "restored_in_cloud")
 
+    def test_a_failed_download_does_not_block_delete_marking(self):
+        # The cloud listed every item; it just would not deliver one file. That is a
+        # file failure, not a blind spot, so a design that is gone still gets its marker.
+        self.run_sync()
+        self.api.design_present = False
+        (self.project / "Fixtures" / "vendor.pdf" / "wip" / "vendor.pdf").unlink()  # forces a re-fetch
+
+        def download_to(href, dest):
+            raise RuntimeError("retries exhausted")
+        self.api.download_to = download_to
+        stats = self.run_sync()
+        self.assertEqual((stats.failed, stats.unlisted), (1, 0))
+        self.assertTrue((self.design / "DELETED_IN_CLOUD").exists())
+        self.assertEqual(self.history(self.design)[-1]["event"], "deleted_in_cloud")
+
+    def test_an_unlisted_project_never_marks_deletes(self):
+        # A project whose contents could not be listed is a blind spot: nothing in it was
+        # seen, so nothing anywhere can be called deleted on this pass.
+        self.run_sync()
+        self.api.design_present = False
+        self.api.projects = lambda hub_id: [
+            {"id": "p1", "attributes": {"name": "Shop/Projects"}},
+            {"id": "p2", "attributes": {"name": "Offline"}},
+        ]
+        listed = self.api.top_folders
+
+        def top_folders(hub_id, project_id):
+            if project_id == "p2":
+                raise fs.ApiError(503, "service unavailable", "https://developer.api.autodesk.com/x")
+            return listed(hub_id, project_id)
+        self.api.top_folders = top_folders
+        stats = self.run_sync()
+        self.assertEqual((stats.failed, stats.unlisted), (1, 1))
+        self.assertFalse((self.design / "DELETED_IN_CLOUD").exists())
+
     def test_filtered_run_never_marks_deletes(self):
         self.run_sync()
         self.api.design_present = False
