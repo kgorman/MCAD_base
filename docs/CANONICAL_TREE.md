@@ -233,8 +233,13 @@ manager and a terminal, and nothing else.
 8. **Make the revision read-only**, for example `chmod -R a-w released/rev-a`.
 9. **Run `mcad_tree.py verify <root>`.** It reports anything missing.
 
-A tool can do these steps for you. The result is the same files either
-way, and `check` cannot tell the difference.
+`mcad_tree.py release` does these steps for you, from the files in `wip/`
+and any you name, in this order, so that an interrupted run leaves exactly
+what an interrupted person would: a revision folder without `SHA256SUMS`,
+which `check` reports. The same code is importable (`mcad_release`) for a
+tool of your own; every refusal carries a stable code such as
+`revision_frozen` or `release_structure_invalid`. The result is the same
+files either way, and `check` cannot tell the difference.
 
 ## Getting a release to a machine
 
@@ -412,7 +417,10 @@ G-code. It does not hold the model, so keep the slicer project beside it;
 the project has the model and the settings, and is what gets re-sliced
 for another printer model. A project 3MF saved before slicing holds no
 G-code and does not count on its own. A separate `profile.json` is
-optional.
+optional. For a Markforged printer the program is the `.mfp` print file
+that Eiger exports (Export Build); it counts the same as G-code. Eiger
+slices in its own cloud from an STL, so the revision holds the STL in
+`mesh/` as what was sent, and the exported `.mfp` as what ran.
 
 These files are locked with the revision. Changing the material, color,
 infill, or any other setting is a new revision.

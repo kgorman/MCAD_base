@@ -185,6 +185,27 @@ Write code that satisfies every line here.
 If the process stops before step 3, the folder has no `SHA256SUMS` and
 `check` reports it, which is the correct result.
 
+You do not have to write this yourself. `mcad_release.py` is this order
+as a library, and `mcad_tree.py release` is it as a command:
+
+```sh
+./mcad_tree.py release <root> "<design>" --by <who> --reason "<why>" --json
+./mcad_tree.py release-status <root> "<design>" --json
+./mcad_tree.py abandon-release <root> "<design>" <rev> --json
+```
+
+With `--json`, success is one JSON object with `"ok": true`, the revision,
+its path, the files, and the manifest; a refusal is `"ok": false` with a
+stable `code` to branch on (`not_found`, `invalid_input`, `invalid_name`,
+`path_traversal`, `revision_frozen`, `release_in_progress`,
+`release_structure_invalid`, `os_permission_denied`, `io_error`), and exit
+code 2 means nothing changed. `--dry-run` returns the same object without
+writing. From Python, `mcad_release.create_release(...)` and
+`release_from_wip(...)` return the object and raise `ReleaseError`
+subclasses carrying the same codes. A lock in `released/` refuses a second
+release of the same design while one is running; `clear_release_lock`
+with `force=True` removes a stale one.
+
 ## Prove it
 
 Run the checker on a store your code has written to. Exit code 0 means no

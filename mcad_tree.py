@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 # The version of these tools. It changes with every release of the repository.
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 # The version of the layout. It changes only when a store that was valid would stop being valid;
 # see "Versions" in docs/CANONICAL_TREE.md.
 SCHEMA_VERSION = 2
@@ -75,7 +75,7 @@ CAD_DIRNAME = "cad"
 BUILD_DIRNAME = "build"
 CAM_DIRNAME = "cam"
 PROFILE_FILE = "profile.json"
-GCODE_SUFFIXES = (".gcode", ".bgcode", ".gco")
+GCODE_SUFFIXES = (".gcode", ".bgcode", ".gco", ".mfp")  # .mfp: a Markforged print file exported from Eiger
 JOB_FILE = "job.json"
 NONCONFORMANCE_FILE = "nonconformance.json"
 JOB_RESULTS = ("pending", "accepted", "rejected")
@@ -838,6 +838,89 @@ def cmd_archive(args: argparse.Namespace) -> None:
     archive_tree(Path(args.root), Path(args.dest) if args.dest else None, args.dry_run, args.force)
 
 
+def _emit(args: argparse.Namespace, result: dict, human: Callable[[dict], None]) -> None:
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+    else:
+        human(result)
+
+
+def _release_command(args: argparse.Namespace, run: Callable[[], dict], human: Callable[[dict], None]) -> None:
+    """Run a release operation; a ReleaseError exits 2, as one JSON object with --json."""
+    import mcad_release
+    try:
+        result = run()
+    except mcad_release.ReleaseError as exc:
+        if args.json:
+            print(json.dumps(exc.to_payload(), indent=2))
+        else:
+            print(f"error ({exc.code}): {exc}", file=sys.stderr)
+        sys.exit(2)
+    _emit(args, result, human)
+
+
+def cmd_release(args: argparse.Namespace) -> None:
+    import mcad_release
+    root = Path(args.root)
+    extra = []
+    for item in args.file or []:
+        src, sep, dest = item.partition("=")
+        if not sep or not src or not dest:
+            sys.exit(f"error: --file wants SRC=DEST, got {item!r}")
+        extra.append(mcad_release.FileSpec(src=src, dest=dest))
+    approval = mcad_release.Approval(reviewed_by=args.reviewed_by or args.by,
+                                     approved_by=args.approved_by or args.by)
+    process = mcad_release.Process(primary=args.primary, material=args.material, color=args.color)
+
+    def run() -> dict:
+        if args.no_wip:
+            if not args.part_number:
+                sys.exit("error: --no-wip needs --part-number")
+            if args.proven_on:
+                process.proven_on = args.proven_on
+            return mcad_release.create_release(
+                root, args.design, extra, args.part_number, args.reason, args.by, approval,
+                revision=args.revision, description=args.description, process=process, dry_run=args.dry_run)
+        return mcad_release.release_from_wip(
+            root, args.design, args.reason, args.by, approval, part_number=args.part_number,
+            description=args.description, revision=args.revision, extra_files=extra,
+            proven_on=args.proven_on, process=process, skip_unknown=args.skip_unknown, dry_run=args.dry_run)
+
+    def human(result: dict) -> None:
+        verb = "Would release" if result["dry_run"] else "Released"
+        print(f"{verb} {result['revision']} of {args.design}: {result['path']}")
+        for dest in result["files"]:
+            print(f"  {dest}")
+        for name in result.get("skipped", []):
+            print(f"  skipped (no place in a revision): wip/{name}")
+        prior = result.get("would_obsolete") or result.get("obsoleted")
+        if prior:
+            print(f"  {'would mark' if result['dry_run'] else 'marked'} {prior} OBSOLETE")
+        for name in result.get("outbox_updated", []):
+            print(f"  copied to _outbox/{name}")
+        if result["dry_run"]:
+            print("Nothing was written.")
+
+    _release_command(args, run, human)
+
+
+def cmd_abandon_release(args: argparse.Namespace) -> None:
+    import mcad_release
+    _release_command(args, lambda: mcad_release.abandon_release(Path(args.root), args.design, args.revision),
+                     lambda r: print(f"Removed the unfrozen revision folder {r['path']}"))
+
+
+def cmd_release_status(args: argparse.Namespace) -> None:
+    import mcad_release
+
+    def human(r: dict) -> None:
+        print(f"current: {r['current_revision'] or 'none'}")
+        print(f"locked: {'yes, ' + json.dumps(r['lock']) if r['locked'] else 'no'}")
+        print(f"incomplete revisions: {', '.join(r['incomplete_revisions']) or 'none'}")
+
+    _release_command(args, lambda: mcad_release.release_status(Path(args.root), args.design), human)
+
+
 def cmd_upgrade(args: argparse.Namespace) -> None:
     root = Path(args.root)
     steps = upgrade_tree(root, args.dry_run)
@@ -886,6 +969,47 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true", help="write a snapshot even if nothing has changed")
     s.add_argument("--dry-run", action="store_true", help="say what would be written")
     s.set_defaults(func=cmd_archive)
+
+    s = sub.add_parser("release", help="freeze a design's wip/ (and any --file) into the next released revision; "
+                                       "writes manifest.json, SHA256SUMS, CURRENT, OBSOLETE, history, and _outbox/ copies")
+    s.add_argument("root")
+    s.add_argument("design", help="the design folder, relative to the root, e.g. 'Hub/Project/Design'")
+    s.add_argument("--by", required=True, help="who is releasing, e.g. an email address")
+    s.add_argument("--reason", required=True, help="why, e.g. 'Initial release'")
+    s.add_argument("--reviewed-by", help="defaults to --by")
+    s.add_argument("--approved-by", help="defaults to --by")
+    s.add_argument("--part-number", help="defaults to part_number in the design's design.json")
+    s.add_argument("--description", help="defaults to description in design.json")
+    s.add_argument("--revision", help="rev-<x>; defaults to the next unused name")
+    s.add_argument("--file", action="append", metavar="SRC=DEST",
+                   help="also release this file, at DEST inside the revision, e.g. "
+                        "/tmp/o0042.nc=cam/haas-vf2/o0042_rev-a.nc; repeatable")
+    s.add_argument("--no-wip", action="store_true", help="release only the --file arguments, nothing from wip/")
+    s.add_argument("--skip-unknown", action="store_true",
+                   help="leave out files in wip/ that have no place in a revision instead of stopping")
+    s.add_argument("--proven-on", action="append", metavar="MODEL",
+                   help="a machine model this revision is proven on; defaults to every model the files hold a program for")
+    s.add_argument("--primary", help="the primary process, e.g. fdm or cnc")
+    s.add_argument("--material")
+    s.add_argument("--color")
+    s.add_argument("--dry-run", action="store_true", help="show the plan and the manifest; write nothing")
+    s.add_argument("--json", action="store_true", help="print the result, or the error with its code, as JSON")
+    s.set_defaults(func=cmd_release)
+
+    s = sub.add_parser("abandon-release", help="remove a leftover revision folder that was never frozen (no SHA256SUMS); "
+                                               "refuses a frozen one")
+    s.add_argument("root")
+    s.add_argument("design")
+    s.add_argument("revision")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_abandon_release)
+
+    s = sub.add_parser("release-status", help="a design's current revision, whether a release is in progress, "
+                                              "and any unfrozen leftovers")
+    s.add_argument("root")
+    s.add_argument("design")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_release_status)
 
     s = sub.add_parser("upgrade", help="move a store from an older schema to this tool's; never changes a released revision")
     s.add_argument("root")

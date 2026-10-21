@@ -51,10 +51,11 @@ A design goes around one loop, and every turn leaves files in its folder.
 1. **Design.** Work in `wip/`. Save as often as you like; nothing here is
    a record. A Fusion sync fills `wip/` for you. See
    [Start a design](#start-a-design).
-2. **Release.** When the design is good, copy it into `released/rev-a/`
-   with its drawings and the program for each machine model, write the
-   manifest naming who reviewed and approved it, and write the checksums.
-   The folder is frozen from then on, and `released/CURRENT` names it.
+2. **Release.** When the design is good, `mcad_tree.py release` copies it
+   into `released/rev-a/` with its drawings and the program for each
+   machine model, writes the manifest naming who reviewed and approved
+   it, and writes the checksums. The folder is frozen from then on, and
+   `released/CURRENT` names it. The same files can be written by hand.
    See [Release a revision](#release-a-revision).
 3. **Run.** A printer or CNC machine takes its file from the current
    revision, never from `wip/`. See
@@ -64,8 +65,8 @@ A design goes around one loop, and every turn leaves files in its folder.
    inspected it, and whether it was accepted. See
    [Record a job](#record-a-job).
 5. **Change.** When the design changes, keep working in `wip/`. When the
-   change is good, release `rev-b` the same way, point `CURRENT` at it,
-   and drop an `OBSOLETE` marker in `rev-a`. Nothing in `rev-a` is edited
+   change is good, release `rev-b` the same way; `CURRENT` moves to it
+   and `rev-a` gets an `OBSOLETE` marker. Nothing in `rev-a` is edited
    or deleted; the jobs that ran it still point at it.
 6. **Check.** Run `check` whenever you like and `verify` on a schedule.
    They report what is missing and change nothing. See
@@ -200,18 +201,45 @@ Add a `design.json` to give the design a part number and a description.
 
 ## Release a revision
 
-A release is made by hand, with a file manager and a terminal:
+One command freezes what is in `wip/` into the next revision:
 
-1. Make `released/rev-a/` in the design folder.
-2. Copy in the CAD, drawings, and the program for each machine model, with
-   lowercase names and no spaces.
-3. Write a short `manifest.json` naming who reviewed and approved it.
-4. Write `SHA256SUMS` over the folder. The revision is now frozen.
-5. Put the revision name in `released/CURRENT`.
+```sh
+./mcad_tree.py release /path/to/store "Hub/Bike/Headset Spacers" \
+    --by you@example.com --reason "Initial release" --dry-run   # show the plan
+./mcad_tree.py release /path/to/store "Hub/Bike/Headset Spacers" \
+    --by you@example.com --reason "Initial release"             # do it
+```
 
-The full steps, with the manifest and the checksum command, are in
+It copies the CAD, meshes, and drawings from `wip/` into `released/rev-a/`
+(then `rev-b`, and so on), renamed to lowercase with no spaces; writes
+`manifest.json`, then `SHA256SUMS`, which freezes the revision; points
+`CURRENT` at it; marks the revision it replaces `OBSOLETE`; appends to
+`history.jsonl`; copies each machine's programs to its `_outbox/` folder;
+and runs `check` on the result. The part number and description come from
+`design.json`, or `--part-number` and `--description`.
+
+- `--reviewed-by` and `--approved-by` default to `--by`. A one-person shop
+  reviews its own work; the record still says who.
+- Files in `wip/` already laid out as a revision (`build/fdm/bambu-p1s/...`,
+  `cam/haas-vf2/...`) keep their place. A loose G-code file or NC program
+  cannot be placed without a machine model, so name its destination:
+  `--file wip/o0042.nc=cam/haas-vf2/o0042_rev-a.nc`. `--skip-unknown` leaves
+  such files out instead of stopping.
+- `--proven-on` defaults to every machine model the revision holds a
+  program for. `--primary`, `--material`, and `--color` fill in `process`.
+- `--json` prints the result, or the error with a stable code such as
+  `revision_frozen`, as one JSON object, for scripts and agents. Exit code
+  2 means the release was refused and nothing changed.
+- `release-status` shows a design's current revision and any unfinished
+  attempt; `abandon-release` removes an unfinished one. A frozen revision
+  can never be changed or removed by either.
+
+The same release can be made by hand, with a file manager and a terminal:
+make `released/rev-a/`, copy the files in, write `manifest.json`, write
+`SHA256SUMS`, and put the revision name in `released/CURRENT`. The full
+steps are in
 [docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#releasing-a-revision-by-hand).
-`verify` confirms the result.
+The result is the same files either way, and `verify` confirms it.
 
 ### What stays in `wip/` and what goes in the release
 
@@ -291,6 +319,34 @@ The two machines take it in opposite directions:
 
 Settings, NAS setup, SMB versions, what the operator has at the machine,
 and the sources are in [docs/MACHINES.md](docs/MACHINES.md).
+
+### Example: a Markforged printer and Eiger
+
+Eiger, Markforged's slicer, runs in their cloud and keeps its own library
+of parts. Nothing is lost by that: the store stays the record, and Eiger
+is one more place a released file goes.
+
+- **The STL comes from the store.** Export the mesh from CAD into `wip/`,
+  release, and import `released/rev-a/mesh/<part>_rev-a.stl` into Eiger.
+  Name the Eiger part after the part number and revision, so the library
+  and the store agree on what a part is.
+- **Settings are set in Eiger**, per part: material, fiber, infill, and
+  layer height. Record the ones that matter in the manifest's `process`
+  (`--material onyx`, for example) so the revision can be read without
+  opening Eiger.
+- **The print file can come back.** After slicing, Export Build in the
+  printer drop-down writes an `.mfp` file, the encrypted program a printer
+  linked to your account runs from a USB stick (Markforged,
+  [Offline Printing: Printing from USB](https://support.markforged.com/hc/en-us/articles/208011606-Offline-Printing-Printing-from-USB);
+  listed for the Onyx One, Onyx Pro, and Mark Two). Put it in
+  `build/fff/<model>/<part>_rev-a.mfp` when you release, and the revision
+  holds what ran, not only what was sent; `.mfp` counts as a program for
+  `proven_on`, like G-code. Without it, the revision's STL plus the Eiger
+  part name is the record, and a job's `job.json` names the Eiger print.
+- **A change is a new revision**, in the store first: new STL in `wip/`,
+  release, import again. Editing the part in Eiger alone leaves the
+  store, and every job that cites it, pointing at a file that no longer
+  matches.
 
 ## Record a job
 
@@ -491,7 +547,8 @@ enforces, and how to test the result.
 
 | File | What it does |
 |---|---|
-| `mcad_tree.py` | Marks a folder as a store, checks it against the layout, writes the part-number index. |
+| `mcad_tree.py` | Marks a folder as a store, checks it against the layout, releases a revision, writes the part-number index, takes snapshots. |
+| `mcad_release.py` | The release procedure as a library, used by `mcad_tree.py release` and importable by other tools. |
 | `fusion_sync.py` | Mirrors Fusion cloud hubs into the store. |
 | `docs/CANONICAL_TREE.md` | The layout, its rules, the file formats, and the ISO mapping. Copied into the store as `SCHEMA.md`. |
 | `docs/FUSION_SYNC.md` | Setting up and running the Fusion sync. |

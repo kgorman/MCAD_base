@@ -11,7 +11,7 @@ license = "Apache-2.0"
 requires-python = ">=3.9"
 
 [tool.setuptools]
-py-modules = ["mcad_tree", "fusion_sync"]
+py-modules = ["mcad_tree", "mcad_release", "fusion_sync"]
 
 [tool.setuptools.dynamic]
 version = { attr = "mcad_tree.__version__" }
