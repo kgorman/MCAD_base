@@ -86,7 +86,7 @@ HISTORY_FILE = "history.jsonl"
 DELETED_MARKER = "DELETED_IN_CLOUD"
 STORE_MARKER = ".mcad-tree.json"  # written by mcad_tree.py init
 STORE_SCHEMA = 2
-__version__ = "0.1.3"  # the tools' version; kept in step with mcad_tree.py
+__version__ = "0.1.4"  # the tools' version; kept in step with mcad_tree.py
 
 # What "native" means per Fusion item kind. A design keeps every one of its formats the cloud
 # has: the f3d, then the f3z archive, which also carries copies of the designs it references.
@@ -929,8 +929,28 @@ def launchd_plist_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
 
 
+def launchd_domain() -> str:
+    """The launchd domain to load the agent into.
+
+    The gui domain exists only while the user is logged in at the console. On a headless Mac
+    reached over SSH, use the per-user background domain instead: the agent then runs until the
+    next reboot, and the plist in LaunchAgents loads it again at the next console login.
+    """
+    uid = os.getuid()
+    gui = subprocess.run(["launchctl", "print", f"gui/{uid}"], capture_output=True)
+    return f"gui/{uid}" if gui.returncode == 0 else f"user/{uid}"
+
+
+def launchd_bootout() -> None:
+    uid = os.getuid()
+    for domain in (f"gui/{uid}", f"user/{uid}"):
+        subprocess.run(["launchctl", "bootout", f"{domain}/{LAUNCHD_LABEL}"], capture_output=True)
+
+
 def install_launchd(cfg: Config, interval: int) -> None:
-    log_dir = cfg.root / STATE_DIRNAME
+    # Logs stay on the local disk: launchd cannot open a log file on a network volume for the
+    # job, and the store is usually a mount.
+    log_dir = Path.home() / "Library" / "Logs" / "fusion-sync"
     log_dir.mkdir(parents=True, exist_ok=True)
     plist = {
         "Label": LAUNCHD_LABEL,
@@ -940,20 +960,26 @@ def install_launchd(cfg: Config, interval: int) -> None:
         "StandardOutPath": str(log_dir / "sync.log"),
         "StandardErrorPath": str(log_dir / "sync.err.log"),
         "EnvironmentVariables": {"FUSION_SYNC_CONFIG_DIR": str(CONFIG_DIR)},
+        # Background: the agent lives in the per-user domain, which exists whether the user is at
+        # the console or only reachable over SSH, and is never loaded twice at a console login.
+        "LimitLoadToSessionType": ["Background"],
     }
     path = launchd_plist_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as fh:
         plistlib.dump(plist, fh)
-    subprocess.run(["launchctl", "unload", str(path)], capture_output=True)
-    subprocess.run(["launchctl", "load", str(path)], check=True)
-    log(f"Installed launchd agent {LAUNCHD_LABEL}: every {interval}s, logs in {log_dir}")
+    launchd_bootout()
+    domain = launchd_domain()
+    subprocess.run(["launchctl", "bootstrap", domain, str(path)], check=True)
+    log(f"Installed launchd agent {LAUNCHD_LABEL} in {domain}: every {interval}s, logs in {log_dir}")
+    if not domain.startswith("gui/"):
+        log("No console login here: after a reboot, log in once or run install-launchd again")
 
 
 def uninstall_launchd() -> None:
     path = launchd_plist_path()
     if path.exists():
-        subprocess.run(["launchctl", "unload", str(path)], capture_output=True)
+        launchd_bootout()
         path.unlink()
         log(f"Removed {path}")
     else:

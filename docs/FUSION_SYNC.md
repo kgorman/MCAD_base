@@ -30,7 +30,6 @@ goes in its `wip/` subfolder.
           wip/vendor-part.pdf    <- uploaded files come down as-is
   .fusion-sync/
     manifest.json                <- which cloud version each file came from
-    sync.log
 ```
 
 Runs are incremental. Only designs whose cloud version changed since the last run are
@@ -111,9 +110,15 @@ run tries it again.
 ## Run it in the background
 
 ```sh
-./fusion_sync.py install-launchd --interval 900   # every 15 minutes, survives reboots
+./fusion_sync.py install-launchd --interval 900   # every 15 minutes
 ./fusion_sync.py uninstall-launchd
 ```
+
+The agent logs to `~/Library/Logs/fusion-sync/sync.log`. It loads whenever the user has a
+session, at the console or over SSH, so it works on a headless Mac too; on such a machine,
+after a reboot, log in once or run `install-launchd` again. If the store is on a network
+volume, the Python running the agent needs Full Disk Access (System Settings, Privacy &
+Security), or every read fails with "Operation not permitted".
 
 Or in the foreground: `./fusion_sync.py watch --interval 900`.
 
