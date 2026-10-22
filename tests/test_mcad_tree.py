@@ -2,7 +2,6 @@
 """Tests for mcad_tree: sets up a store in a temp folder and checks it."""
 
 import contextlib
-import csv
 import io
 import json
 import sys
@@ -158,12 +157,8 @@ class McadTreeTest(unittest.TestCase):
         problems, _ = mt.check_tree(self.root)
         self.assertEqual(len(problems), 2)
         self.assertIn("approval.reviewed_by: Brackets/Motor Mount/released/rev-a", problems[0])
-
-        mt.build_index(self.root, out=quiet)
-        with (self.root / "_index" / "parts.csv").open() as fh:
-            rows = list(csv.DictReader(fh))
-        self.assertEqual([(r["name"], r["path"], r["current_revision"]) for r in rows],
-                         [("Motor Mount", "Brackets/Motor Mount", "rev-a")])
+        self.assertEqual(mt.current_revision(design), "rev-a")
+        self.assertEqual(mt.store_path(design, self.root), "Brackets/Motor Mount")
 
     def test_a_cloud_folder_named_wip_is_not_a_design(self):
         mt.init_tree(self.root, out=quiet)
@@ -370,26 +365,13 @@ class McadTreeTest(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertEqual(len(notes), 3)
 
-    # -- index ------------------------------------------------------------- #
-
-    def test_index_lists_designs_by_part_number(self):
+    def test_a_stray_underscore_folder_at_the_root_is_noted(self):
         mt.init_tree(self.root, out=quiet)
         self.make_design("Hub/Bike/Stem Cap", item_id="a")
-        spacer = self.make_design("Hub/Bike/Headset Spacers", item_id="b", part_number="bm-0042")
-        self.make_revision(spacer)
-        self.assertEqual(mt.build_index(self.root, out=quiet), 1)
-        with (self.root / "_index" / "parts.csv").open() as fh:
-            rows = list(csv.DictReader(fh))
-        self.assertEqual([r["part_number"] for r in rows], ["bm-0042", ""])
-        self.assertEqual(rows[0]["path"], "Hub/Bike/Headset Spacers")
-        self.assertEqual(rows[0]["current_revision"], "rev-a")
-        self.assertEqual(rows[0]["wip_version"], "3")
-        self.assertEqual(mt.build_index(self.root, out=quiet), 0)  # unchanged, not rewritten
-        self.assertEqual(mt.check_tree(self.root), ([], []))       # _index is not a hub
-
-    def test_index_requires_a_store(self):
-        with self.assertRaises(mt.TreeError):
-            mt.build_index(self.root, out=quiet)
+        (self.root / "_index").mkdir()   # a leftover from an older tool, or anything of a person's
+        problems, notes = mt.check_tree(self.root)
+        self.assertEqual(problems, [])
+        self.assertEqual(notes, ["unknown folder at the root: _index"])
 
     # -- archive ----------------------------------------------------------- #
 
@@ -522,9 +504,7 @@ class McadTreeTest(unittest.TestCase):
         for line in problems:
             self.assertNotIn("\\", line)
         self.assertIn("Kenny's Hub/Bike/Headset Spacers/released/rev-a", problems[0])
-        mt.build_index(self.root, out=quiet)
-        with (self.root / "_index" / "parts.csv").open() as fh:
-            self.assertEqual([r["path"] for r in csv.DictReader(fh)], ["Kenny's Hub/Bike/Headset Spacers"])
+        self.assertEqual(mt.store_path(design, self.root), "Kenny's Hub/Bike/Headset Spacers")
 
     # -- versions ---------------------------------------------------------- #
 

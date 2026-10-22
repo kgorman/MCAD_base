@@ -2,7 +2,6 @@
 """The two tools together: a store set up by mcad_tree and filled by fusion_sync must pass check."""
 
 import contextlib
-import csv
 import io
 import json
 import sys
@@ -42,7 +41,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(fs.STORE_SCHEMA, mt.SCHEMA_VERSION)
         self.assertEqual(fs.__version__, mt.__version__)
 
-    def test_synced_store_passes_check_and_indexes(self):
+    def test_synced_store_passes_check_and_keeps_a_persons_keys(self):
         self.sync()
         self.assertEqual(mt.check_tree(self.root), ([], []))
         self.assertEqual(len(list(mt.find_designs(self.root))), 2)
@@ -51,15 +50,12 @@ class StoreTest(unittest.TestCase):
         info = json.loads((design / "design.json").read_text())
         info["part_number"] = "bv-0001"
         (design / "design.json").write_text(json.dumps(info))
-        mt.build_index(self.root, out=quiet)
-        with (self.root / "_index" / "parts.csv").open() as fh:
-            rows = list(csv.DictReader(fh))
-        self.assertEqual(rows[0]["part_number"], "bv-0001")
-        self.assertEqual(rows[0]["path"], "Kenny's Hub/Shop_Projects/Bench Vise")
-        self.assertEqual(rows[0]["wip_version"], "3")
 
-        self.sync()  # the index and docs at the root do not confuse the next sync
+        self.sync()  # the docs at the root do not confuse the next sync; the part number survives it
         self.assertEqual(mt.check_tree(self.root), ([], []))
+        info = json.loads((design / "design.json").read_text())
+        self.assertEqual(info["part_number"], "bv-0001")
+        self.assertEqual(info["wip"]["version_number"], 3)
 
     def test_sync_leaves_a_persons_files_in_wip_alone(self):
         self.sync()
@@ -72,17 +68,15 @@ class StoreTest(unittest.TestCase):
         self.assertEqual((wip / "notes.txt").read_text(), "mine")
         self.assertEqual(mt.check_tree(self.root), ([], []))
 
-    def test_cloud_delete_shows_up_in_check_and_index(self):
+    def test_cloud_delete_shows_up_in_check(self):
         self.sync()
         self.api.design_present = False
         self.sync()
         problems, notes = mt.check_tree(self.root)
         self.assertEqual(problems, [])
         self.assertEqual(notes, ["deleted in the cloud, kept here: Kenny's Hub/Shop_Projects/Bench Vise"])
-        mt.build_index(self.root, out=quiet)
-        with (self.root / "_index" / "parts.csv").open() as fh:
-            flagged = [r["name"] for r in csv.DictReader(fh) if r["deleted_in_cloud"]]
-        self.assertEqual(flagged, ["Bench Vise"])
+        design = self.root / "Kenny's Hub" / "Shop_Projects" / "Bench Vise"
+        self.assertTrue((design / mt.DELETED_MARKER).exists())
 
 
 if __name__ == "__main__":

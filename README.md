@@ -70,7 +70,7 @@ A design goes around one loop, and every turn leaves files in its folder.
    or deleted; the jobs that ran it still point at it.
 6. **Check.** Run `check` whenever you like and `verify` on a schedule.
    They report what is missing and change nothing. See
-   [Check and index](#check-and-index).
+   [Check and verify](#check-and-verify).
 
 After one turn of the loop a design looks like this:
 
@@ -153,7 +153,6 @@ storage in the sync).
     design.json       optional: part number, description
     history.jsonl     ledger: released, ran, synced, moved
     (anything else)   yours
-  _index/parts.csv    generated: part number -> folder
   _outbox/<machine>/  flat copies for machines, only if needed
   _archive/           whole-store snapshots: <date>.tar.gz, .sha256, ledger
 ```
@@ -189,8 +188,8 @@ creates no design folders; you make those, or a sync tool does.
 
 Make a folder for the design anywhere below the store root, make `wip/`,
 `released/`, and `jobs/` inside it, and work in `wip/` with whatever CAD
-system the shop uses. No command is needed; `check`, `verify`, and `index`
-pick the folder up. The empty `released/` and `jobs/` show where releases
+system the shop uses. No command is needed; `check` and `verify` pick the
+folder up. The empty `released/` and `jobs/` show where releases
 and job records go.
 
 With a Fusion sync you make nothing: each design in the cloud gets its
@@ -373,12 +372,11 @@ first article: it needs an inspection record before it can be accepted.
 The fields are in
 [docs/CANONICAL_TREE.md](docs/CANONICAL_TREE.md#jobjson-for-a-job).
 
-## Check and index
+## Check and verify
 
 ```sh
 ./mcad_tree.py check /path/to/store    # find gaps; non-zero exit on problems
 ./mcad_tree.py verify /path/to/store   # check, plus re-hash every released file
-./mcad_tree.py index /path/to/store    # writes _index/parts.csv
 ./mcad_tree.py add-machine /path/to/store haas-vf2
 ./mcad_tree.py archive /path/to/store  # snapshot everything to _archive/; no-op if unchanged
 ./mcad_tree.py upgrade /path/to/store  # move a store to a newer schema
@@ -547,7 +545,7 @@ enforces, and how to test the result.
 
 | File | What it does |
 |---|---|
-| `mcad_tree.py` | Marks a folder as a store, checks it against the layout, releases a revision, writes the part-number index, takes snapshots. |
+| `mcad_tree.py` | Marks a folder as a store, checks it against the layout, releases a revision, takes snapshots. |
 | `mcad_release.py` | The release procedure as a library, used by `mcad_tree.py release` and importable by other tools. |
 | `fusion_sync.py` | Mirrors Fusion cloud hubs into the store. |
 | `docs/CANONICAL_TREE.md` | The layout, its rules, the file formats, and the ISO mapping. Copied into the store as `SCHEMA.md`. |

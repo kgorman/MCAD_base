@@ -24,8 +24,11 @@ Three sources, in order of authority:
   `wip/`, `released/`, or `jobs/`. The folders above a design can have
   any names and any depth.
 - **The file system is the database.** Every record is a plain file in the
-  design's folder. There is no server, no SQLite file, no index that is a
-  source of truth. `_index/parts.csv` is generated and can be deleted.
+  design's folder. There is no server, no SQLite file, and no index or
+  cache inside the store, not even a generated one: a derived file goes
+  stale the moment someone renames a folder by hand, and nothing would
+  flag it. Walk the tree. If your tool wants a cache, keep it in your
+  tool's own memory or its own state directory, never in the store.
 - **Users are the operating system's users.** There are no accounts or
   roles in MCAD_base. Do not add any.
 - **Tools report; they do not block.** People work in `wip/` with whatever
@@ -53,7 +56,6 @@ Three sources, in order of authority:
     jobs/
       <date>_<machine>_<job>/
     (anything else)    belongs to people
-  _index/parts.csv     generated
   _outbox/<machine>/   flat copies for machines
   _archive/            whole-store snapshots from mcad_tree.py archive; never read as designs
 ```

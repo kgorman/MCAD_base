@@ -86,7 +86,7 @@ HISTORY_FILE = "history.jsonl"
 DELETED_MARKER = "DELETED_IN_CLOUD"
 STORE_MARKER = ".mcad-tree.json"  # written by mcad_tree.py init
 STORE_SCHEMA = 2
-__version__ = "0.1.4"  # the tools' version; kept in step with mcad_tree.py
+__version__ = "0.1.5"  # the tools' version; kept in step with mcad_tree.py
 
 # What "native" means per Fusion item kind. A design keeps every one of its formats the cloud
 # has: the f3d, then the f3z archive, which also carries copies of the designs it references.

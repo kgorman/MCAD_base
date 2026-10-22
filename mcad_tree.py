@@ -11,8 +11,7 @@ copied into the store as SCHEMA.md.
 `init` marks a folder as a store. People make design folders by hand; a sync
 tool such as fusion_sync.py makes them from a CAD system's cloud. `check`
 finds what is missing or out of place, `verify` also re-hashes every released
-file, `index` writes a part-number lookup, and `archive` snapshots the whole
-store into one dated tar.gz. All are safe to re-run; none overwrite or delete
+file, and `archive` snapshots the whole store into one dated tar.gz. All are safe to re-run; none overwrite or delete
 what they did not write.
 
 Standard library only. Python 3.9+.
@@ -22,7 +21,6 @@ Quick start:
     ./mcad_tree.py init /path/to/store             # create it
     ./mcad_tree.py check /path/to/store            # find gaps: missing files, records, sign-offs
     ./mcad_tree.py verify /path/to/store           # check, plus re-hash every released file
-    ./mcad_tree.py index /path/to/store            # write _index/parts.csv
     ./mcad_tree.py add-machine /path/to/store haas-vf2
     ./mcad_tree.py archive /path/to/store          # snapshot everything to _archive/<date>.tar.gz; no-op if unchanged
     ./mcad_tree.py upgrade /path/to/store --dry-run  # move a store to this tool's schema
@@ -31,10 +29,8 @@ Quick start:
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime
 import hashlib
-import io
 import json
 import os
 import re
@@ -45,7 +41,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 # The version of these tools. It changes with every release of the repository.
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 # The version of the layout. It changes only when a store that was valid would stop being valid;
 # see "Versions" in docs/CANONICAL_TREE.md.
 SCHEMA_VERSION = 2
@@ -82,17 +78,13 @@ JOB_RESULTS = ("pending", "accepted", "rejected")
 DISPOSITIONS = ("scrap", "rework", "use-as-is", "return")
 
 # At the store root, beside the hubs.
-INDEX_DIRNAME = "_index"
 OUTBOX_DIRNAME = "_outbox"
 ARCHIVE_DIRNAME = "_archive"
-ROOT_DIRNAMES = (INDEX_DIRNAME, OUTBOX_DIRNAME, ARCHIVE_DIRNAME)
-PARTS_INDEX = "parts.csv"
+ROOT_DIRNAMES = (OUTBOX_DIRNAME, ARCHIVE_DIRNAME)
 # Whole-store snapshots: <prefix>-<date>-<time>.tar.gz, each with a .sha256 beside it, and one
 # ledger line per snapshot. Paths inside a snapshot are store-relative.
 ARCHIVE_PREFIX = "mcad_base"
 ARCHIVE_LEDGER = "archives.jsonl"
-INDEX_COLUMNS = ["part_number", "name", "kind", "hub", "project", "path",
-                 "current_revision", "wip_version", "deleted_in_cloud"]
 
 ROOT_README = """\
 # MCAD_base
@@ -163,8 +155,8 @@ def valid_name(name: str) -> bool:
 
 
 def store_path(path, root: Path, sep: str = os.sep) -> str:
-    """A path relative to the store root, with forward slashes on every platform, so the index and
-    the messages are the same whichever machine wrote them."""
+    """A path relative to the store root, with forward slashes on every platform, so the messages
+    are the same whichever machine wrote them."""
     return os.path.relpath(path, root).replace(sep, "/")
 
 
@@ -639,34 +631,6 @@ def upgrade_tree(root: Path, dry_run: bool = False, out: Callable[[str], None] =
     return len(steps)
 
 
-def build_index(root: Path, dry_run: bool = False, out: Callable[[str], None] = print) -> int:
-    """Write _index/parts.csv: one row per design, so a part number finds its folder."""
-    require_store(root)
-    rows = []
-    for design in find_designs(root):
-        info = read_json(design / DESIGN_FILE) or {}
-        rows.append({
-            "part_number": info.get("part_number") or "",
-            "name": info.get("name") or design.name,
-            "kind": info.get("kind") or "",
-            "hub": info.get("hub") or "",
-            "project": info.get("project") or "",
-            "path": store_path(design, root),
-            "current_revision": current_revision(design) or "",
-            "wip_version": (info.get("wip") or {}).get("version_number") or "",
-            "deleted_in_cloud": "yes" if (design / DELETED_MARKER).exists() else "",
-        })
-    rows.sort(key=lambda r: (r["part_number"] == "", r["part_number"], r["path"]))
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=INDEX_COLUMNS, lineterminator="\n")
-    writer.writeheader()
-    writer.writerows(rows)
-    sc = Scaffold(root, dry_run, out)
-    sc.write(f"{INDEX_DIRNAME}/{PARTS_INDEX}", buf.getvalue(), update=True)
-    out(f"{len(rows)} design(s), {sum(1 for r in rows if r['part_number'])} with a part number.")
-    return sc.changed
-
-
 def add_machine(root: Path, name: str, dry_run: bool = False, out: Callable[[str], None] = print) -> int:
     """A flat, safely named folder a machine can mount. Released files are copied into it; it is never a file's home."""
     require_store(root)
@@ -826,10 +790,6 @@ def cmd_check(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def cmd_index(args: argparse.Namespace) -> None:
-    summarize(build_index(Path(args.root), args.dry_run), args.dry_run)
-
-
 def cmd_add_machine(args: argparse.Namespace) -> None:
     summarize(add_machine(Path(args.root), args.name, args.dry_run), args.dry_run)
 
@@ -950,11 +910,6 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("verify", help="check, plus re-hash every released file against its SHA256SUMS; reads the whole store")
     s.add_argument("root")
     s.set_defaults(func=cmd_check)
-
-    s = sub.add_parser("index", help="write _index/parts.csv, a part-number lookup")
-    s.add_argument("root")
-    s.add_argument("--dry-run", action="store_true")
-    s.set_defaults(func=cmd_index)
 
     s = sub.add_parser("add-machine", help="add a machine-facing folder under _outbox/")
     s.add_argument("root")
