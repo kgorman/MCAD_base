@@ -278,6 +278,10 @@ class ReleaseFromWipTest(ReleaseTestCase):
         (design / "wip" / "_versions" / "Headset Spacers v2.f3d").write_bytes(b"old")
         return design
 
+    def test_generator_src_folder_keeps_its_path(self):
+        self.assertEqual(mr.place_wip_file("src/Part.py"), "src/part.py")
+        self.assertEqual(mr.place_wip_file("src/params.json"), "src/params.json")
+
     def test_wip_is_routed_renamed_and_sourced(self):
         design = self.make_synced_design()
         result = mr.release_from_wip(self.root, "Hub/Bike/Headset Spacers", "first", "alex", self.approval())

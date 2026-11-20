@@ -89,6 +89,7 @@ subfolders of the design, not separate trees.
             <design>.f3d                    <- synced designs: native file, latest cloud version; sync replaces it
             <design>.f3z                    <- the same version as an archive, with the designs it references
             <design>.step
+            src/                            <- generator script and params.json, for a part made by code
             _versions/                      <- prior copies when the cloud version changed
               <design>.v13.f3d
 
@@ -120,6 +121,7 @@ subfolders of the design, not separate trees.
                   o0042_op10_rev-a_setup-sheet.pdf
               docs/
                 orientation.md              <- build orientation, supports, post-processing
+              src/                          <- generator script and params.json that made the files above
               reviews/                      <- evidence behind the sign-off; frozen with the revision
                 design-review.md            <- review of the design, and of the change from the prior rev
                 inspection_first-article.pdf  <- verification and validation records
@@ -311,6 +313,24 @@ sync owns the keys shown here and preserves any others, so `part_number`,
   }
 }
 ```
+
+### Parts made by code
+
+A part made by a script keeps the script in the design. Put the script and
+its parameters in `wip/src/`, for example `part.py` and `params.json`. The
+outputs go where they always go: `cad/` and `mesh/`. A release copies
+`src/` into the revision, so a released revision can be rebuilt exactly.
+
+Add an optional `generator` key to `design.json` so a person knows how to
+rebuild it:
+
+```json
+"generator": {"name": "CadQuery", "version": "2.5", "command": "python src/part.py src/params.json"}
+```
+
+The store keeps the script and checks its hash. It never runs it. Shared
+helper libraries live outside the store; the script names the version it
+needs.
 
 ## history.jsonl
 

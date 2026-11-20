@@ -79,7 +79,7 @@ CAD_SUFFIXES = (".f3d", ".f3z", ".step", ".stp", ".iges", ".igs", ".sldprt", ".s
                 ".iam", ".x_t", ".x_b", ".3dm", ".scad", ".fcstd", ".prt", ".catpart")
 MESH_SUFFIXES = (".stl", ".3mf", ".obj", ".ply", ".amf")
 DRAWING_SUFFIXES = (".pdf", ".dwg", ".dxf", ".svg")
-REVISION_DIRNAMES = (CAD_DIRNAME, BUILD_DIRNAME, CAM_DIRNAME, "mesh", "drawings", "docs", "reviews")
+REVISION_DIRNAMES = (CAD_DIRNAME, BUILD_DIRNAME, CAM_DIRNAME, "mesh", "drawings", "docs", "reviews", "src")
 
 
 # ---------- errors ----------

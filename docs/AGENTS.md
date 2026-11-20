@@ -48,7 +48,7 @@ Three sources, in order of authority:
   <any folders>/<design>/
     design.json        optional: part number, description, identity
     history.jsonl      append-only ledger
-    wip/               working files
+    wip/               working files; src/ holds a generator script for a part made by code
     released/
       CURRENT          one line: the current revision, e.g. rev-b
       rev-a/           frozen once SHA256SUMS is written
