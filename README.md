@@ -2,34 +2,58 @@
 
 # MCAD_base
 
-An open-source folder standard for manufacturing. It sets how a shop that
-makes parts by CNC machining and additive manufacturing keeps its design
-files, in plain folders on a NAS or any shared drive. The file system is
-the database: every record is a plain file in
-the tree, with no server and no separate database, so the store stays
-readable without these tools.
+## What this is, in plain words
 
-Every design has one folder holding its working CAD files, its frozen
-released revisions, the G-code and NC programs its machines run, and the
-record of what was made from them. The layout works with any CAD or CAM
-system, and printers and CNC machines take their files straight from a
-released revision. For Autodesk Fusion, the included sync tool copies
-every design from the cloud into the store. See
-[docs/FUSION_SYNC.md](docs/FUSION_SYNC.md).
+Anything made in a machine shop starts as a computer file. A person draws
+the part on a computer, which is called CAD (computer-aided design). Then
+another file tells a machine how to make it: a 3D printer, or a mill or
+lathe that cuts metal. That file is a program of simple steps, such as
+"move here, then cut this deep."
 
-It is built to help a shop meet ISO 9001: the records an auditor asks for
-are files in the design's own folder. See [ISO alignment](#iso-alignment).
+A shop ends up with hundreds of these files, and they go bad in quiet ways:
 
-The tools do not set how a shop works. They check a store against the
-layout and report what is missing; nothing blocks a save or rewrites your
-files.
+- Someone edits a drawing and the machine still runs the old program.
+- Two people keep two copies, and nobody knows which one is right.
+- A customer reports a bad part a year later, and nobody can say which
+  file made it.
 
-Because the store is only files, the shop backs it up, copies it, or zips
-it with whatever it already uses, and controls access with the operating
-system's own users and permissions.
+MCAD_base is a set of simple rules for keeping these files in ordinary
+folders so those things do not happen. It also ships small tools that
+help follow the rules.
 
-The only dependency is Python 3.9 or newer. See
-[Requirements](#requirements).
+## The idea
+
+Every part gets one folder. Inside it:
+
+- **A work folder** for drafts. Change anything, any time.
+- **A released folder** for finished versions. Once a version is released,
+  it is locked and never changed. A new change makes a new version beside
+  it. The folder also records who checked it and who approved it.
+- **A record of what was made.** Each production run notes which version
+  ran, on which machine, and whether the parts passed inspection.
+
+Machines only run files from a released version. So the answer to "which
+file made this part?" is always one folder, and it cannot have changed
+since.
+
+## Why it matters
+
+- **Mistakes cost real money.** A wrong program wastes metal, machine time,
+  and sometimes a machine.
+- **Customers and auditors ask for proof.** Quality standards such as
+  ISO 9001 expect a shop to show what it made and how. Here the proof is
+  in the part's own folder.
+- **Nothing is locked in.** It is plain files in plain folders, so you can
+  open them with any computer, back them up with what you already use, and
+  switch CAD programs later without losing anything. There is no server
+  and no database to maintain.
+
+The tools only check and report. They never block your work or rewrite
+your files. For Autodesk Fusion, a CAD program, the included sync tool
+copies every design from the cloud into the folders. See
+[docs/FUSION_SYNC.md](docs/FUSION_SYNC.md). The shop's quality-standard
+mapping is in [ISO alignment](#iso-alignment). The only software needed is
+Python 3.9 or newer; see [Requirements](#requirements).
 
 ## Quick start
 
